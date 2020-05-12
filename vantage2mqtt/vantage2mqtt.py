@@ -11,7 +11,7 @@ import logging
 import asyncio
 import jsonschema
 from infusion import InFusionConfig
-from infusion import InFusionServer
+from infusion import InFusionClient
 from hamqtt import HomeAssistant
 
 class VantageGateway:
@@ -44,7 +44,7 @@ class VantageGateway:
         self._min_reconnect_interval = 1
         self._max_reconnect_interval = 120
 
-        self._infusion = InFusionServer(cfg["vantage"])
+        self._infusion = InFusionClient(cfg["vantage"])
         self._infusion.on_state = self.on_vantage_state
         self._infusion.on_unhandled = self.on_vantage_unhandled
         self._devices = devices

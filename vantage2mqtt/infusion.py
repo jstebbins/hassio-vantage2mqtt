@@ -317,7 +317,7 @@ class InFusionConfig:
             next_vid = objects[next_vid]["parent"]
         return site_name
 
-class InFusionServer(asyncio.Protocol):
+class InFusionClient(asyncio.Protocol):
     """
     Vantage inFusion host command handler
     Establishes TCP connection to inFusion host command port.
