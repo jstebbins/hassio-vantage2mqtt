@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Vantage inFusion to MQTT Gateway
 """
@@ -32,7 +32,7 @@ class VantageGateway:
         try:
             self.protocol = protocol
             self.cfg = cfg
-            self._site_name = cfg["vantage"]["location"]["name"]
+            self._site_name = cfg["vantage"]["site-name"]
         except Exception as err:
             self._log.critical("Configuration file Error: %s", str(err))
             sys.exit(1)
@@ -88,6 +88,7 @@ class VantageGateway:
                 value = json.loads(param)
             except json.JSONDecodeError as err:
                 self._log.error("light: JSON error: %s", str(err))
+                value = {}
                 return
 
             brightness = value.get("brightness")
@@ -102,6 +103,21 @@ class VantageGateway:
                                             (vid, brightness, transition))
             else:
                 self._infusion.send_command("LOAD %s %d" % (vid, brightness))
+
+    def global_command(self, vid, command, param):
+        if vid == "all":
+            if command == "flush":
+                self._proto.flush_devices(self._devices)
+            elif command == "register":
+                try:
+                    value = json.loads(param)
+                except json.JSONDecodeError as err:
+                    self._log.error("light: JSON error: %s", str(err))
+                    value = {}
+                short_names = value.get("short-names")
+                self._proto.register_devices(self._devices, short_names)
+            elif command == "refresh":
+                self.update_state(self._devices)
 
     # Translate MQTT command and send to vantage
     def on_mqtt_filtered(self, mosq, obj, msg):
@@ -124,6 +140,8 @@ class VantageGateway:
             self.switch_command(vid, command)
         elif device_type == "light":
             self.light_command(vid, command, value)
+        elif device_type == "all":
+            self.global_command(vid, command, value)
         else:
             self._log.warning('Unknown device type "%s"', device_type)
 
@@ -199,7 +217,7 @@ class VantageGateway:
                 await self._infusion.connect()
                 return
             except OSError as err:
-                print("inFusion connect error, retrying: %s", str(err))
+                self._log.warning("inFusion connect error, retrying: %s", str(err))
                 time.sleep(reconnect_interval)
                 if reconnect_interval < self._max_reconnect_interval:
                     reconnect_interval *= 2
@@ -284,6 +302,7 @@ class Main:
     USAGE = (
         "%s [-v -h]\n"
         "    -h --help       - show this message\n"
+        "    -c --config     - Read options from file (default vantage.json)\n"
         "    -w --write      - Save design center XML read from controller\n"
         "    -f --flush      - Flush Home Assistant controller config\n"
         "    --homeassistant - Use Home Assistant discovery protocol (default)\n"
@@ -306,24 +325,10 @@ class Main:
             "vantage" : {
                 "type" : "object",
                 "properties" : {
-                    "location" : {
-                        "type" : "object",
-                        "properties" : {
-                            "name" : {"type" : "string"}
-                        },
-                        "required" : ["name"],
-                        "additionalProperties" : False
-                    },
-                    "network" : {
-                        "type" : "object",
-                        "properties" : {
-                            "ip"           : {"type" : "string"},
-                            "command_port" : {"type" : "number"},
-                            "config_port"  : {"type" : "number"}
-                        },
-                        "required" : ["ip", "command_port", "config_port"],
-                        "additionalProperties" : False
-                    },
+                    "site-name" : {"type" : "string"},
+                    "ip"           : {"type" : "string"},
+                    "command_port" : {"type" : "number"},
+                    "config_port"  : {"type" : "number"},
                     "dcconfig" : {"type" : "string"},
                     "dccache" : {"type" : "boolean"},
                     "debug" : {"type" : "boolean"},
@@ -333,32 +338,18 @@ class Main:
                     "motors" : {"type" : "boolean"},
                     "relays" : {"type" : "boolean"}
                 },
-                "required" : ["network"],
+                "required" : ["ip", "command_port", "config_port"],
                 "additionalProperties" : False
             },
             "mqtt" : {
                 "type" : "object",
                 "properties" : {
-                    "auth" : {
-                        "type" : "object",
-                        "properties" : {
-                            "user" : {"type" : "string"},
-                            "password" : {"type" : "string"}
-                        },
-                        "required" : ["user", "password"],
-                        "additionalProperties" : False,
-                    },
-                    "network" : {
-                        "type" : "object",
-                        "properties" : {
-                            "ip" : {"type" : "string"},
-                            "port" : {"type" : "number"}
-                        },
-                        "required" : ["ip", "port"],
-                        "additionalProperties" : False
-                    }
+                    "username" : {"type" : "string"},
+                    "password" : {"type" : "string"},
+                    "ip" : {"type" : "string"},
+                    "port" : {"type" : "number"}
                 },
-                "required" : ["network"],
+                "required" : ["ip", "port"],
                 "additionalProperties" : False
             }
         },
@@ -377,9 +368,9 @@ class Main:
         self._log = logging.getLogger("main")
         try:
             opts, args = getopt.getopt(
-                argv[1:], "hvdcw:fs",
+                argv[1:], "hvdcw:c:fs",
                 ["help", "verbose", "debug", "cache", "write=",
-                 "flush", "homeassistant", "shortnames"])
+                 "config=", "flush", "homeassistant", "shortnames"])
 
         except getopt.GetoptError:
             self.usage()
@@ -390,7 +381,8 @@ class Main:
         self.cache_dc = None
         self.flush_devices = False
         self.protocol = VantageGateway.PROTO_HOMEASSISTANT
-        self.use_short_device_names = True
+        self.use_short_device_names = None
+        self.config = self.CONFIG_FILENAME
         for opt, arg in opts:
             if opt in ("-h", "--help"):
                 self.usage()
@@ -401,6 +393,8 @@ class Main:
                 self.verbose = logging.DEBUG
             elif opt in ("-w", "--write"):
                 self.dc_save = arg
+            elif opt in ("-c", "--config"):
+                self.config = arg
             elif opt in ("-c", "--cache"):
                 self.cache_dc = True
             elif opt in ("-f", "--flush"):
@@ -426,7 +420,7 @@ class Main:
 
         cfg = None
         try:
-            with open(self.CONFIG_FILENAME) as fp:
+            with open(self.config) as fp:
                 cfg = json.load(fp)
                 jsonschema.validate(cfg, self.gatewayConfigSchema)
         except jsonschema.exceptions.ValidationError as err:
@@ -498,7 +492,7 @@ class Main:
 
         gateway = VantageGateway(cfg, devices, self.protocol)
         try:
-            if not self.use_short_device_names:
+            if self.use_short_device_names is None:
                 self.use_short_device_names = cfg["vantage"].get("short-names")
             gateway.connect(self.use_short_device_names, self.flush_devices)
         except KeyboardInterrupt:
@@ -529,10 +523,8 @@ class Main:
 
         # Use Vantage Design Center confguration root object name
         # for site name if not set in gateway configuration file
-        if (cfg["vantage"].get("location") is None or
-                not cfg["vantage"]["location"].get("name")):
-            cfg["vantage"]["location"] = {}
-            cfg["vantage"]["location"]["name"] = vantage_cfg.site_name
+        if not cfg["vantage"].get("site-name"):
+            cfg["vantage"]["site-name"] = vantage_cfg.site_name
 
         # If we read a new Vantage inFusion configuration, update
         # the devices file

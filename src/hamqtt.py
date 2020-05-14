@@ -19,10 +19,10 @@ class MQTTClient:
         """
 
         self._log = logging.getLogger("mqttclient")
-        self._ip = mqttCfg["network"]["ip"]
-        self._port = mqttCfg["network"]["port"]
-        self._user = mqttCfg["auth"]["user"]
-        self._passwd = mqttCfg["auth"]["password"]
+        self._ip = mqttCfg["ip"]
+        self._port = mqttCfg["port"]
+        self._user = mqttCfg["username"]
+        self._passwd = mqttCfg["password"]
         self._client = None
         self._connect_attempted = False
         self.connected = False

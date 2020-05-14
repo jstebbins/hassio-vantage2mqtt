@@ -37,8 +37,8 @@ class InFusionConfig:
 
         self._log = logging.getLogger("vantage")
         # Vantage TCP access
-        ip = cfg["network"]["ip"]
-        port = cfg["network"]["config_port"]
+        ip = cfg["ip"]
+        port = cfg["config_port"]
 
         self.updated = False
         self.devices = None
@@ -331,8 +331,8 @@ class InFusionClient(asyncio.Protocol):
 
         self._log = logging.getLogger("infusion")
         # Vantage TCP access
-        self._ip = tcpCfg["network"]["ip"]
-        self._port = tcpCfg["network"]["command_port"]
+        self._ip = tcpCfg["ip"]
+        self._port = tcpCfg["command_port"]
 
         # Callbacks
         self.on_state = None

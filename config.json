@@ -1,0 +1,53 @@
+{
+    "name": "Vantage2MQTT",
+    "version": "1",
+    "slug": "vantage2mqtt",
+    "description": "Vantage inFusion to MQTT Gateway",
+    "arch": ["armhf", "aarch64", "amd64", "i386"],
+    "startup": "application",
+    "boot": "auto",
+    "options": {
+        "vantage" : {
+            "site-name" : "SiteName",
+            "ip"   : "192.168.1.100",
+            "command_port" : 3001,
+            "config_port" : 2001,
+            "dcconfig" : "SiteName.dc",
+            "dccache" : true,
+            "debug" : false,
+            "short-names" : false,
+            "buttons" : true,
+            "lights" : true,
+            "motors" : false,
+            "relays" : false
+        },
+        "mqtt" : {
+            "ip"   : "core-mosquitto",
+            "port" : 1883,
+            "username" : "mosquitto",
+            "password" : ""
+        }
+    },
+    "schema": {
+        "vantage" : {
+            "site-name" : "str?",
+            "ip"   : "str",
+            "command_port" : "int",
+            "config_port" : "int",
+            "dcconfig" : "str?",
+            "dccache" : "bool?",
+            "debug" : "bool?",
+            "short-names" : "bool?",
+            "buttons" : "bool?",
+            "lights" : "bool?",
+            "motors" : "bool?",
+            "relays" : "bool?"
+        },
+        "mqtt" : {
+            "ip"   : "str",
+            "port" : "int",
+            "username" : "str?",
+            "password" : "str?"
+        }
+    }
+}
