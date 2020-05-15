@@ -131,10 +131,10 @@ class VantageGateway:
             else:
                 self._infusion.send_command("LOAD %s %d" % (vid, brightness))
 
-    def global_command(self, vid, command, param):
+    def site_command(self, vid, command, param):
         """
         Control commands that can be manually sent via MQTT topic
-        'vantage/all/<SiteName>/all/<command>' to reconfigure
+        'vantage/site/<SiteName>/all/<command>' to reconfigure
         the gateway
         """
 
@@ -187,8 +187,8 @@ class VantageGateway:
             self.switch_command(vid, command)
         elif device_type == "light":
             self.light_command(vid, command, value)
-        elif device_type == "all":
-            self.global_command(vid, command, value)
+        elif device_type == "site":
+            self.site_command(vid, command, value)
         else:
             self._log.warning('Unknown device type "%s"', device_type)
 
