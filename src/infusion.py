@@ -36,6 +36,8 @@ class InFusionConfig:
         """
 
         self._log = logging.getLogger("vantage")
+        self._log.debug("InFusionConfig init")
+
         # Vantage TCP access
         ip = cfg["ip"]
         port = cfg["config_port"]
@@ -97,6 +99,7 @@ class InFusionConfig:
 
         self.site_name = self.lookup_site(self.objects)
         self.updated = True
+        self._log.debug("InFusionConfig init complete")
 
     def get_enabled_devices(self, cfg):
         """
@@ -188,7 +191,6 @@ class InFusionConfig:
         self._log.debug("create_objects")
         objects = {}
         for item in xml_root:
-            print(item)
             if item.tag == "Objects":
                 for obj in item.iter(None):
                     vid = obj.get('VID')
@@ -281,6 +283,7 @@ class InFusionConfig:
         returns:       dictionary of devices
         """
 
+        self._log.debug("filter_objects")
         devices = {}
         unique_devices = {}
         for vid, item in objects.items():
@@ -308,6 +311,7 @@ class InFusionConfig:
         returns:       site name string
         """
 
+        self._log.debug("lookup_site")
         site_name = "Default"
         vid = next(iter(self.devices.values()))["VID"]
         next_vid = objects[vid]["parent"]

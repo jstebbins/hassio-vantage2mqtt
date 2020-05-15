@@ -22,7 +22,7 @@ class VantageGateway:
     PROTO_HOMIE = 1
     PROTO_HOMEASSISTANT = 2
 
-    def __init__(self, cfg, devices, protocol):
+    def __init__(self, cfg, devices, protocol, short_names=False):
         """
         param cfg:      dictionary of gateway settings
         param protocol: MQTT device discovery protocol to use
@@ -53,6 +53,33 @@ class VantageGateway:
         # Wait till we have updated the controller with full status
         # before allowing it to change values
         self.wait_for_settle = True
+        self.short_names = short_names
+
+        # Callbacks
+        self.on_vantage_config_changed = None
+
+    def read_vantage_config(self):
+        """
+        Read Vantage Design Center configuration and parse out the
+        elements that will be communicated in the MQTT device discovery
+        phase
+        """
+
+        self._log.debug("read_vantage_config")
+        try:
+            vantage_cfg = InFusionConfig(self.cfg["vantage"])
+        except Exception as err:
+            self._log.critical("Error reading Vantage inFusion configuration: %s", str(err))
+            raise
+
+        if vantage_cfg.infusion_memory_valid and vantage_cfg.updated:
+            if self.on_vantage_config_changed is not None:
+                try:
+                    self.on_vantage_config_changed(vantage_cfg.xml_config,
+                                                   vantage_cfg.objects)
+                except:
+                    self._log.critical("Error writing Vantage inFusion configuration: %s", str(err))
+            self._devices = vantage_cfg.devices
 
     def switch_command(self, vid, command):
         """
@@ -105,18 +132,38 @@ class VantageGateway:
                 self._infusion.send_command("LOAD %s %d" % (vid, brightness))
 
     def global_command(self, vid, command, param):
+        """
+        Control commands that can be manually sent via MQTT topic
+        'vantage/all/<SiteName>/all/<command>' to reconfigure
+        the gateway
+        """
+
         if vid == "all":
             if command == "flush":
+                # Force flushing of currently known inFusion devices from HA
                 self._proto.flush_devices(self._devices)
             elif command == "register":
+                # Force re-registering of inFusion devices
+                # json dict param allows setting 'short-names'
                 try:
                     value = json.loads(param)
                 except json.JSONDecodeError as err:
                     self._log.error("light: JSON error: %s", str(err))
                     value = {}
                 short_names = value.get("short-names")
-                self._proto.register_devices(self._devices, short_names)
+                if short_names is not None:
+                    self.short_names = short_names
+                self._proto.register_devices(self._devices, self.short_names)
+            elif command == "reload":
+                # Force reloading from inFusion memory card
+                self._proto.flush_devices(self._devices)
+                try:
+                    self.read_vantage_config()
+                except:
+                    return
+                self._proto.register_devices(self._devices, self.short_names)
             elif command == "refresh":
+                # Get new status from all inFusion devices
                 self.update_state(self._devices)
 
     # Translate MQTT command and send to vantage
@@ -233,14 +280,13 @@ class VantageGateway:
         if self.cfg["vantage"].get("lights"):
             self._infusion.send_command("status LOAD")
 
-    async def _connect(self, short_names=False, flush=False):
+    async def _connect(self, flush=False):
         """
         Connect to MQTT broker and Vantage inFusion TCP port.
         Register Vantage inFusion devices with controller.
         Listen for MQTT topics from controller and publish status.
         Forward commands from controller to inFusion and listen for status.
 
-        param short_names: use short names when registering devices
         param flush:       flush old device settings when registering
         """
 
@@ -259,7 +305,7 @@ class VantageGateway:
         if flush:
             self._proto.flush_devices(self._devices)
         # Register inFusion devices with controller through MQTT broker
-        self._proto.register_devices(self._devices, short_names)
+        self._proto.register_devices(self._devices, self.short_names)
         # Read current state of devices from inFusion and send to MQTT broker
         self.update_state(self._devices)
         time.sleep(1)
@@ -277,11 +323,11 @@ class VantageGateway:
             # Refresh state of devices
             self.update_state(self._devices)
 
-    def connect(self, short_names=False, flush=False):
+    def connect(self, flush=False):
         """
         Kick off asyncio
         """
-        asyncio.run(self._connect(short_names, flush))
+        asyncio.run(self._connect(flush))
 
     def close(self):
         """
@@ -376,6 +422,7 @@ class Main:
             self.usage()
             sys.exit(2)
 
+        self.cfg = {}
         self.verbose = None
         self.dc_save = None
         self.cache_dc = None
@@ -418,11 +465,10 @@ class Main:
           MQTT Broker network connection settings
         """
 
-        cfg = None
         try:
             with open(self.config) as fp:
-                cfg = json.load(fp)
-                jsonschema.validate(cfg, self.gatewayConfigSchema)
+                self.cfg = json.load(fp)
+                jsonschema.validate(self.cfg, self.gatewayConfigSchema)
         except jsonschema.exceptions.ValidationError as err:
             self._log.critical("Invalid configuration file: %s", str(err))
             sys.exit(1)
@@ -430,9 +476,8 @@ class Main:
             self._log.critical("Error: %s", str(err))
             raise
         fp.close()
-        return cfg
 
-    def read_vantage_config(self, cfg):
+    def read_vantage_config(self):
         """
         Read Vantage Design Center configuration and parse out the
         elements that will be communicated in the MQTT device discovery
@@ -440,25 +485,26 @@ class Main:
         """
 
         try:
-            dc = cfg["vantage"].get("dcconfig")
-            return InFusionConfig(cfg["vantage"], self.DEVICES_FILENAME, dc)
+            dc = self.cfg["vantage"].get("dcconfig")
+            return InFusionConfig(self.cfg["vantage"], self.DEVICES_FILENAME, dc)
         except Exception as err:
             self._log.critical("Error: %s", str(err))
             sys.exit(1)
 
-    def write_design_center_config(self, cfg, vantage_cfg):
+    def write_design_center_config(self, xml):
         """
         If requested on the command line, write the Vantage
         Design Center configuration out to a file
         """
 
+        self._log.debug("write_design_center_config")
         # If started in caching mode and dcconfig was provided,
         # write the Design Center configuration that was read
         # from the Vantage inFusion memory card to dcconfig file
-        dc = cfg["vantage"].get("dcconfig")
-        if self.cache_dc and dc and vantage_cfg.infusion_memory_valid:
+        dc = self.cfg["vantage"].get("dcconfig")
+        if self.cache_dc and dc:
             with open(dc, "w") as fp:
-                fp.write(vantage_cfg.xml_config)
+                fp.write(xml)
             fp.close()
 
         # If command line arg -w/--write was provided,
@@ -467,7 +513,7 @@ class Main:
         # provided on the command line
         if self.dc_save:
             with open(self.dc_save, "w") as fp:
-                fp.write(vantage_cfg.xml_config)
+                fp.write(xml)
             fp.close()
 
     def write_devices_config(self, devices):
@@ -475,6 +521,7 @@ class Main:
         Save the discovered devices to a file
         """
 
+        self._log.debug("write_devices_config")
         # Save devices parsed from Design Center configuration
         # to our devices configuration file
         try:
@@ -485,16 +532,37 @@ class Main:
                 "Warning: failed to update %s", self.DEVICES_FILENAME)
         fp.close()
 
-    def launch_gateway(self, cfg, devices):
+    def on_vantage_config_changed(self, xml, objects):
+        """
+        Callback to write inFusion object cache and Design Center
+        configuration files when an update from the inFusion memory
+        card is forced
+
+        param xml:     Design Center configuration
+        param objects: updated inFusion objects
+        """
+
+        self._log.debug("on_vantage_config_changed")
+        # Write Vantage inFusion configuration to file, if requested
+        self.write_design_center_config(xml)
+
+        # If we read a new Vantage inFusion configuration, update
+        # the devices file
+        self.write_devices_config(objects)
+
+    def launch_gateway(self, devices):
         """
         Start the gateway
         """
 
-        gateway = VantageGateway(cfg, devices, self.protocol)
+        self._log.debug("launch_gateway")
+        if self.use_short_device_names is None:
+            self.use_short_device_names = self.cfg["vantage"].get("short-names")
+        gateway = VantageGateway(self.cfg, devices, self.protocol,
+                                 self.use_short_device_names)
+        gateway.on_vantage_config_changed = self.on_vantage_config_changed
         try:
-            if self.use_short_device_names is None:
-                self.use_short_device_names = cfg["vantage"].get("short-names")
-            gateway.connect(self.use_short_device_names, self.flush_devices)
+            gateway.connect(self.flush_devices)
         except KeyboardInterrupt:
             self._log.info("Stopped by user")
         except Exception as err:
@@ -507,24 +575,25 @@ class Main:
         """
 
         # Read gateway configuration file
-        cfg = self.read_config()
+        self.read_config()
         if self.verbose is None:
-            if cfg["vantage"].get("debug"):
-                logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+            if self.cfg["vantage"].get("debug"):
+                logging.getLogger().setLevel(logging.DEBUG)
         if self.cache_dc is None:
-            self.cache_dc = cfg["vantage"].get("dccache")
+            self.cache_dc = self.cfg["vantage"].get("dccache")
 
         # Read Vantage inFusion configuration,
         # may come from inFusion memory card
-        vantage_cfg = self.read_vantage_config(cfg)
+        vantage_cfg = self.read_vantage_config()
 
         # Write Vantage inFusion configuration to file, if requested
-        self.write_design_center_config(cfg, vantage_cfg)
+        if vantage_cfg.infusion_memory_valid:
+            self.write_design_center_config(vantage_cfg.xml_config)
 
         # Use Vantage Design Center confguration root object name
         # for site name if not set in gateway configuration file
-        if not cfg["vantage"].get("site-name"):
-            cfg["vantage"]["site-name"] = vantage_cfg.site_name
+        if not self.cfg["vantage"].get("site-name"):
+            self.cfg["vantage"]["site-name"] = vantage_cfg.site_name
 
         # If we read a new Vantage inFusion configuration, update
         # the devices file
@@ -532,7 +601,7 @@ class Main:
             self.write_devices_config(vantage_cfg.objects)
 
         # Launch the gateway
-        self.launch_gateway(cfg, vantage_cfg.devices)
+        self.launch_gateway(vantage_cfg.devices)
 
 ### Main programm
 if __name__ == '__main__':
