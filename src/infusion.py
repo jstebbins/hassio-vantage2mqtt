@@ -8,12 +8,64 @@ Permits controlling lights and buttons
 import socket
 import base64
 import json
+import time
 import string
 import xml.etree.ElementTree as ET
 import re
 import io
 import logging
 import asyncio
+from zeroconf import ServiceBrowser, Zeroconf, ServiceStateChange, DNSAddress
+
+def handle_zeroconf_service_state_change(zeroconf, service_type, name, state):
+    """
+    zeroconf service change handler
+
+    param zeroconf:     Zeroconf instance
+    param service_type: zeroconf service type
+    param name:         service name
+    param state:        new service state
+    """
+
+    log = logging.getLogger()
+    log.debug("state %s", str(state))
+    if state is not ServiceStateChange.Added:
+        return None, None
+
+    ip = port = None
+    info = zeroconf.get_service_info(service_type, name)
+    for a in info.addresses:
+        log.debug("check IP: %d.%d.%d.%d", a[0], a[1], a[2], a[3])
+        if not ip or ip.startswith("169.254."):
+            ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+            log.debug("set %s", ip)
+    port = info.port
+
+    # info.addresses only contains link-local address for some reason
+    # search for a non-link-local address
+    # link-local is often not routed
+    records = zeroconf.cache.entries_with_name(info.server)
+    log.debug(records)
+    for r in records:
+        if isinstance(r, DNSAddress):
+            a = r.address
+            log.debug("check IP: %d.%d.%d.%d", a[0], a[1], a[2], a[3])
+            if not ip or ip.startswith("169.254."):
+                ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+                log.debug("set %s", ip)
+
+    log.debug("IP: %s:%d", ip, port)
+    return ip, port
+
+class ConfigException(Exception):
+    """
+    ConfigException raised when an invalid configuration is given
+    """
+
+class InFusionException(Exception):
+    """
+    InFusionException raised when an error occurs negociating with inFusion
+    """
 
 class InFusionConfig:
     """
@@ -35,16 +87,18 @@ class InFusionConfig:
         param xml_config_file: xml cache file to read devices from
         """
 
-        self._log = logging.getLogger("vantage")
+        self._log = logging.getLogger("InFusionConfig")
         self._log.debug("InFusionConfig init")
 
         # Vantage TCP access
-        ip = cfg["ip"]
-        port = cfg["config_port"]
+        ip = cfg.get("ip")
+        port = cfg.get("config_port")
+        zeroconf = cfg.get("zeroconf")
+        if not zeroconf and (not ip or port is None):
+            raise ConfigException("Zeroconf or IP/Port is required")
 
         self.updated = False
         self.devices = None
-        self.dc_valid = False
         self.infusion_memory_valid = False
         self.objects = None
 
@@ -58,8 +112,11 @@ class InFusionConfig:
                 with open(devicesFile) as fp:
                     self.objects = json.load(fp)
                     fp.close()
-            except:
-                pass
+            except json.JSONDecodeError as err:
+                self._log.warning("Failed to parse %s, %s",
+                                  devicesFile, str(err))
+            except IOError as err:
+                self._log.warning("Failed read %s, %s", devicesFile, str(err))
         if self.objects:
             self.devices = self.filter_objects(enabled_devices, self.objects)
             return # Valid devices configuration found
@@ -73,26 +130,28 @@ class InFusionConfig:
                 xml_root = xml_tree.getroot()
                 self.xml_config = ET.tostring(xml_root)
                 self.objects = self.create_objects(xml_root)
-            except Exception as err:
+            except ET.ParseError as err:
                 self._log.warning("Failed to parse %s, %s",
                                   xml_config_file, str(err))
 
         if self.objects is None:
             # Try Vantage inFusion memory card
-            try:
-                self._log.debug("Try inFusion Memory card ip %s:%d", ip, port)
-                self.xml_config = self.read_infusion_memory(ip, port)
-                xml_root = ET.fromstring(self.xml_config)
-                # Parse Design Center configuration into devices that will
-                # be provided during MQTT discovery
-                self.objects = self.create_objects(xml_root)
-                if self.objects is not None:
-                    self.infusion_memory_valid = True
-            except Exception as err:
-                self._log.warning("Failed to read memory card, %s", str(err))
-                raise Exception("No valid Design Center configuration found")
-        else:
-            self.dc_valid = True
+            if zeroconf:
+                self._log.debug("Lookup _aci service via zeroconf")
+                zc = Zeroconf()
+                browser = ServiceBrowser(zc, "_aci._tcp.local.",
+                                         handlers=[self.on_zeroconf_service_state_change])
+                timeout = 10
+                self._reading = False
+                while self.objects is None and (self._reading or timeout):
+                    time.sleep(1)
+                    if not self._reading:
+                        timeout -= 1
+                zc.close()
+                if self.objects is None:
+                    raise InFusionException("Failed to read inFusion memory")
+            else:
+                self.read_infusion_memory(ip, port)
 
         # Filter out the devices we do not want to enable
         self.devices = self.filter_objects(enabled_devices, self.objects)
@@ -100,6 +159,26 @@ class InFusionConfig:
         self.site_name = self.lookup_site(self.objects)
         self.updated = True
         self._log.debug("InFusionConfig init complete")
+
+    def on_zeroconf_service_state_change(self, zeroconf, service_type, name, state_change):
+        """
+        zeroconf service change callback
+
+        param zeroconf:     Zeroconf instance
+        param service_type: zeroconf service type
+        param name:         service name
+        param state_change: new service state
+        """
+
+        self._log.debug("zeroconf service change")
+        ip, port = handle_zeroconf_service_state_change(zeroconf, service_type,
+                                                        name, state_change)
+
+        if ip and port and self.objects is None:
+            try:
+                self.read_infusion_memory(ip, port)
+            except InFusionException as err:
+                self._log.warning("Error reading inFusion memory: %s", err)
 
     def get_enabled_devices(self, cfg):
         """
@@ -138,6 +217,7 @@ class InFusionConfig:
         returns: Design Center xml string
         """
 
+        self._log.debug("Try inFusion Memory card ip %s:%d", ip, port)
         if ip is not None and port is not None:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((ip, port))
@@ -147,6 +227,7 @@ class InFusionConfig:
             sock.settimeout(1)
             size = 0
             config = bytearray()
+            self._reading = True
             try:
                 while True:
                     # receive data from Vantage
@@ -154,21 +235,28 @@ class InFusionConfig:
                     if not data:
                         break
                     size += len(data)
+                    self._log.debug("read size %d", size)
                     config.extend(data)
             except socket.timeout:
                 sock.close()
-            except:
-                self._log.critical(
-                    "Error reading config from IP %s port %d", ip, port)
-                raise
+            except OSError as err:
+                self._reading = False
+                sock.close()
+                raise InFusionException(
+                    "Error reading inFusion config: %s" % str(err))
 
             config = config.decode('ascii')
             config = config[config.find('<?File Encode="Base64" /'):]
             config = config.replace('<?File Encode="Base64" /', '')
             config = config[:config.find('</return>'):]
             config = base64.b64decode(config)
-            return config.decode('utf-8')
-        raise Exception("IP and port required to read inFusion memory")
+            self.xml_config = config.decode('utf-8')
+
+            xml_root = ET.fromstring(self.xml_config)
+            # Parse Design Center configuration into devices that will
+            # be provided during MQTT discovery
+            self.infusion_memory_valid = True
+            self.objects = self.create_objects(xml_root)
 
     # Build object dictionary
     #
@@ -328,15 +416,19 @@ class InFusionClient(asyncio.Protocol):
     Sends commands and receives status.
     """
 
-    def __init__(self, tcpCfg):
+    def __init__(self, cfg):
         """
-        param tcpCfg: dictionary of Vantage inFusion connection settings
+        param cfg: dictionary of Vantage inFusion connection settings
         """
 
-        self._log = logging.getLogger("infusion")
+        self._log = logging.getLogger("InFusionClient")
+
         # Vantage TCP access
-        self._ip = tcpCfg["ip"]
-        self._port = tcpCfg["command_port"]
+        self._ip = cfg.get("ip")
+        self._port = cfg.get("command_port")
+        self._zeroconf = cfg.get("zeroconf")
+        if not self._zeroconf and (not self._ip or self._port is None):
+            raise ConfigException("Zeroconf or IP/Port is required")
 
         # Callbacks
         self.on_state = None
@@ -349,8 +441,33 @@ class InFusionClient(asyncio.Protocol):
         self._transport = None
         self.connection = None
         self.connected = False
+        self.zeroconf_future = None
         self.connected_future = None
         self.connection_lost_future = None
+        self._loop = None
+
+    def on_zeroconf_service_state_change(self, zeroconf, service_type, name, state_change):
+        """
+        zeroconf service change callback
+
+        param zeroconf:     Zeroconf instance
+        param service_type: zeroconf service type
+        param name:         service name
+        param state_change: new service state
+        """
+
+        async def _set_future(future):
+            future.set_result(None)
+
+        self._log.debug("zeroconf service change")
+        ip, port = handle_zeroconf_service_state_change(zeroconf, service_type,
+                                                        name, state_change)
+
+        if ip and port:
+            self._ip = ip
+            self._port = port
+            self._log.debug("zeroconf_future set_result")
+            asyncio.run_coroutine_threadsafe(_set_future(self.zeroconf_future), self._loop).result()
 
     def connection_made(self, transport):
         """
@@ -382,12 +499,24 @@ class InFusionClient(asyncio.Protocol):
         """
 
         self._log.debug("connect")
+        self._loop = asyncio.get_running_loop()
+        if self._zeroconf:
+            self._log.debug("Lookup service _hc via zeroconf")
+            self.zeroconf_future = self._loop.create_future()
+            zc = Zeroconf()
+            browser = ServiceBrowser(zc, "_hc._tcp.local.",
+                                     handlers=[self.on_zeroconf_service_state_change])
+            self._log.debug("await zeroconf_future")
+            await self.zeroconf_future
+            self._log.debug("zeroconf_future done")
+            zc.close()
+
         # establish TCP connection to Vantage inFusion
-        loop = asyncio.get_running_loop()
-        self.connected_future = loop.create_future()
-        self.connection_lost_future = loop.create_future()
-        self.connection = await loop.create_connection(lambda: self,
-                                                       self._ip, self._port)
+        self._log.debug("create_connection IP %s:%d", self._ip, self._port)
+        self.connected_future = self._loop.create_future()
+        self.connection_lost_future = self._loop.create_future()
+        self.connection = await self._loop.create_connection(lambda: self,
+                                                             self._ip, self._port)
 
     def close(self):
         """

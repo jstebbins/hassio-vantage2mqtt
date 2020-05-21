@@ -10,7 +10,7 @@ import time
 import logging
 import asyncio
 import jsonschema
-from infusion import InFusionConfig
+from infusion import InFusionConfig, InFusionException, ConfigException
 from infusion import InFusionClient
 from hamqtt import HomeAssistant
 
@@ -29,13 +29,9 @@ class VantageGateway:
         """
 
         self._log = logging.getLogger("gateway")
-        try:
-            self.protocol = protocol
-            self.cfg = cfg
-            self._site_name = cfg["vantage"]["site-name"]
-        except Exception as err:
-            self._log.critical("Configuration file Error: %s", str(err))
-            sys.exit(1)
+        self.protocol = protocol
+        self.cfg = cfg
+        self._site_name = cfg["vantage"]["site-name"]
 
         if self.protocol == self.PROTO_HOMEASSISTANT:
             self._proto = HomeAssistant(self._site_name, cfg["mqtt"])
@@ -44,7 +40,12 @@ class VantageGateway:
         self._min_reconnect_interval = 1
         self._max_reconnect_interval = 120
 
-        self._infusion = InFusionClient(cfg["vantage"])
+        try:
+            self._infusion = InFusionClient(cfg["vantage"])
+        except ConfigException as err:
+            self._log.critical("Error: %s", str(err))
+            sys.exit(1)
+
         self._infusion.on_state = self.on_vantage_state
         self._infusion.on_unhandled = self.on_vantage_unhandled
         self._devices = devices
@@ -68,17 +69,14 @@ class VantageGateway:
         self._log.debug("read_vantage_config")
         try:
             vantage_cfg = InFusionConfig(self.cfg["vantage"])
-        except Exception as err:
-            self._log.critical("Error reading Vantage inFusion configuration: %s", str(err))
+        except (InFusionException, ConfigException) as err:
+            self._log.critical("Error: %s", str(err))
             raise
 
         if vantage_cfg.infusion_memory_valid and vantage_cfg.updated:
             if self.on_vantage_config_changed is not None:
-                try:
-                    self.on_vantage_config_changed(vantage_cfg.xml_config,
-                                                   vantage_cfg.objects)
-                except:
-                    self._log.critical("Error writing Vantage inFusion configuration: %s", str(err))
+                self.on_vantage_config_changed(vantage_cfg.xml_config,
+                                               vantage_cfg.objects)
             self._devices = vantage_cfg.devices
 
     def switch_command(self, vid, command):
@@ -159,7 +157,7 @@ class VantageGateway:
                 self._proto.flush_devices(self._devices)
                 try:
                     self.read_vantage_config()
-                except:
+                except (InFusionException, ConfigException):
                     return
                 self._proto.register_devices(self._devices, self.short_names)
             elif command == "refresh":
@@ -317,9 +315,12 @@ class VantageGateway:
             await self._infusion.connection_lost_future
             self._log.warning("Connection to inFusion lost, reconnecting")
             # Connection to inFusion lost, try reconnecting
-            self.connect_infusion()
+            await self.connect_infusion()
+            # Wait for inFusion to be ready for us to send it commands
+            # and retrieve status
+            await self._infusion.connected_future
             # Enable status feedback for button LEDs
-            self._infusion.send_command("status LED")
+            self.enable_status()
             # Refresh state of devices
             self.update_state(self._devices)
 
@@ -372,9 +373,10 @@ class Main:
                 "type" : "object",
                 "properties" : {
                     "site-name" : {"type" : "string"},
-                    "ip"           : {"type" : "string"},
+                    "zeroconf" : {"type" : "boolean"},
+                    "ip" : {"type" : "string"},
                     "command_port" : {"type" : "number"},
-                    "config_port"  : {"type" : "number"},
+                    "config_port" : {"type" : "number"},
                     "dcconfig" : {"type" : "string"},
                     "dccache" : {"type" : "boolean"},
                     "debug" : {"type" : "boolean"},
@@ -384,7 +386,6 @@ class Main:
                     "motors" : {"type" : "boolean"},
                     "relays" : {"type" : "boolean"}
                 },
-                "required" : ["ip", "command_port", "config_port"],
                 "additionalProperties" : False
             },
             "mqtt" : {
@@ -487,7 +488,7 @@ class Main:
         try:
             dc = self.cfg["vantage"].get("dcconfig")
             return InFusionConfig(self.cfg["vantage"], self.DEVICES_FILENAME, dc)
-        except Exception as err:
+        except (InFusionException, ConfigException) as err:
             self._log.critical("Error: %s", str(err))
             sys.exit(1)
 
@@ -503,8 +504,12 @@ class Main:
         # from the Vantage inFusion memory card to dcconfig file
         dc = self.cfg["vantage"].get("dcconfig")
         if self.cache_dc and dc:
-            with open(dc, "w") as fp:
-                fp.write(xml)
+            try:
+                with open(dc, "w") as fp:
+                    fp.write(xml)
+            except IOError as err:
+                self._log.warning(
+                    "Warning: failed to update %s, %s", dc, str(err))
             fp.close()
 
         # If command line arg -w/--write was provided,
@@ -512,8 +517,12 @@ class Main:
         # from the Vantage inFusion memory card to the file
         # provided on the command line
         if self.dc_save:
-            with open(self.dc_save, "w") as fp:
-                fp.write(xml)
+            try:
+                with open(self.dc_save, "w") as fp:
+                    fp.write(xml)
+            except IOError as err:
+                self._log.warning(
+                    "Warning: failed to update %s, %s", self.dc_save, str(err))
             fp.close()
 
     def write_devices_config(self, devices):
@@ -527,9 +536,9 @@ class Main:
         try:
             with open(self.DEVICES_FILENAME, "w") as fp:
                 json.dump(devices, fp, indent=4, sort_keys=True)
-        except:
+        except IOError as err:
             self._log.warning(
-                "Warning: failed to update %s", self.DEVICES_FILENAME)
+                "Warning: failed to update %s, %s", self.DEVICES_FILENAME, str(err))
         fp.close()
 
     def on_vantage_config_changed(self, xml, objects):
