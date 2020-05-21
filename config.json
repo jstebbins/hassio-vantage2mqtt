@@ -47,7 +47,7 @@
             "ip"   : "str",
             "port" : "int",
             "username" : "str?",
-            "password" : "str?"
+            "password" : "password?"
         }
     }
 }
