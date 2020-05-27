@@ -22,7 +22,7 @@ class VantageGateway:
     PROTO_HOMIE = 1
     PROTO_HOMEASSISTANT = 2
 
-    def __init__(self, cfg, devices, protocol, short_names=False):
+    def __init__(self, cfg, entities, objects, protocol, short_names=False):
         """
         param cfg:      dictionary of gateway settings
         param protocol: MQTT device discovery protocol to use
@@ -48,7 +48,8 @@ class VantageGateway:
 
         self._infusion.on_state = self.on_vantage_state
         self._infusion.on_unhandled = self.on_vantage_unhandled
-        self._devices = devices
+        self._entities = entities
+        self._objects = objects
 
         # The controller likes to toggle things around for a bit
         # Wait till we have updated the controller with full status
@@ -77,18 +78,19 @@ class VantageGateway:
             if self.on_vantage_config_changed is not None:
                 self.on_vantage_config_changed(vantage_cfg.xml_config,
                                                vantage_cfg.objects)
-            self._devices = vantage_cfg.devices
+            self._entities = vantage_cfg.entities
+            self._objects = vantage_cfg.objects
 
     def switch_command(self, vid, command):
         """
         process MQTT command for a switch
         """
 
-        device = self._devices.get(vid)
-        if vid not in self._devices or command == "status":
+        entity = self._entities.get(vid)
+        if vid not in self._entities or command == "status":
             return
-        # Validate device is a button
-        if device["type"] != "Button":
+        # Validate entity is a button
+        if entity["type"] != "Button":
             return
 
         self._log.debug("switch command: %s %s", command, vid)
@@ -100,11 +102,11 @@ class VantageGateway:
         process MQTT command for a switch
         """
 
-        device = self._devices.get(vid)
-        if not device or command == "status":
+        entity = self._entities.get(vid)
+        if not entity or command == "status":
             return
-        # Validate device is a light
-        if device["type"] not in ("Light", "DimmerLight"):
+        # Validate entity is a light
+        if entity["type"] not in ("Light", "DimmerLight"):
             return
 
         self._log.debug("light command: %s %s %s", vid, command, str(param))
@@ -123,7 +125,7 @@ class VantageGateway:
                 brightness = 0
             if state == "ON" and not brightness:
                 brightness = 100
-            if device["type"] == "DimmerLight" and transition:
+            if entity["type"] == "DimmerLight" and transition:
                 self._infusion.send_command("RAMPLOAD %s %d %d" %
                                             (vid, brightness, transition))
             else:
@@ -138,10 +140,10 @@ class VantageGateway:
 
         if vid == "all":
             if command == "flush":
-                # Force flushing of currently known inFusion devices from HA
-                self._proto.flush_devices(self._devices)
+                # Force flushing of currently known inFusion entities from HA
+                self._proto.flush_entities(self._entities)
             elif command == "register":
-                # Force re-registering of inFusion devices
+                # Force re-registering of inFusion entities
                 # json dict param allows setting 'short-names'
                 try:
                     value = json.loads(param)
@@ -151,18 +153,20 @@ class VantageGateway:
                 short_names = value.get("short-names")
                 if short_names is not None:
                     self.short_names = short_names
-                self._proto.register_devices(self._devices, self.short_names)
+                self._proto.register_entities(self._entities, self._objects,
+                                              self.short_names)
             elif command == "reload":
                 # Force reloading from inFusion memory card
-                self._proto.flush_devices(self._devices)
+                self._proto.flush_entities(self._entities)
                 try:
                     self.read_vantage_config()
                 except (InFusionException, ConfigException):
                     return
-                self._proto.register_devices(self._devices, self.short_names)
+                self._proto.register_entities(self._entities, self._objects,
+                                              self.short_names)
             elif command == "refresh":
-                # Get new status from all inFusion devices
-                self.update_state(self._devices)
+                # Get new status from all inFusion entities
+                self.update_state(self._entities)
 
     # Translate MQTT command and send to vantage
     def on_mqtt_filtered(self, mosq, obj, msg):
@@ -178,17 +182,17 @@ class VantageGateway:
         self._log.debug(">vantage: %s - %s", msg.topic, value)
         if self.wait_for_settle:
             return
-        device_type, vid, command = self._proto.split_topic(msg.topic)
+        entity_type, vid, command = self._proto.split_topic(msg.topic)
         if not vid or not command:
             return
-        if device_type == "switch":
+        if entity_type == "switch":
             self.switch_command(vid, command)
-        elif device_type == "light":
+        elif entity_type == "light":
             self.light_command(vid, command, value)
-        elif device_type == "site":
+        elif entity_type == "site":
             self.site_command(vid, command, value)
         else:
-            self._log.warning('Unknown device type "%s"', device_type)
+            self._log.warning('Unknown entity type "%s"', entity_type)
 
     def on_mqtt_unfiltered(self, mosq, obj, msg):
         """
@@ -202,16 +206,16 @@ class VantageGateway:
         mqttmsg = str(msg.payload.decode("utf-8"))
         self._log.debug(">unknown: %s - %s", msg.topic, mqttmsg)
 
-    def on_vantage_state(self, device_type, vid, state):
+    def on_vantage_state(self, entity_type, vid, state):
         """
         Vantage callback for button status
 
-        param vid:   Vanntage inFusion device ID
+        param vid:   Vanntage inFusion entity ID
         param onoff: button on/off state
         """
 
-        topic = self._proto.gateway_device_state_topic(device_type, vid)
-        value = self._proto.translate_state(device_type, state)
+        topic = self._proto.gateway_entity_state_topic(entity_type, vid)
+        value = self._proto.translate_state(entity_type, state)
         self._proto.publish(topic, value)
 
     def on_vantage_unhandled(self, line):
@@ -220,12 +224,12 @@ class VantageGateway:
         """
         self._log.debug(">vantage unknown: %s", line)
 
-    def update_state(self, devices):
+    def update_state(self, entities):
         """
         Update the controllers state for all buttons
         """
 
-        for vid, item in devices.items():
+        for vid, item in entities.items():
             if item["type"] == "Button":
                 self._infusion.send_command("GETLED %s" % vid)
             elif item["type"] in ("DimmerLight", "Light"):
@@ -281,11 +285,11 @@ class VantageGateway:
     async def _connect(self, flush=False):
         """
         Connect to MQTT broker and Vantage inFusion TCP port.
-        Register Vantage inFusion devices with controller.
+        Register Vantage inFusion entities with controller.
         Listen for MQTT topics from controller and publish status.
         Forward commands from controller to inFusion and listen for status.
 
-        param flush:       flush old device settings when registering
+        param flush:       flush old entity settings when registering
         """
 
         self._log.debug("_connect")
@@ -299,13 +303,14 @@ class VantageGateway:
 
         # Enable status feedback for button LEDs
         self.enable_status()
-        # If requested on the command line, flush old devices from controller
+        # If requested on the command line, flush old entities from controller
         if flush:
-            self._proto.flush_devices(self._devices)
-        # Register inFusion devices with controller through MQTT broker
-        self._proto.register_devices(self._devices, self.short_names)
-        # Read current state of devices from inFusion and send to MQTT broker
-        self.update_state(self._devices)
+            self._proto.flush_entities(self._entities)
+        # Register inFusion entities with controller through MQTT broker
+        self._proto.register_entities(self._entities, self._objects,
+                                      self.short_names)
+        # Read current state of entities from inFusion and send to MQTT broker
+        self.update_state(self._entities)
         time.sleep(1)
         self.wait_for_settle = False
         self._log.debug("ready")
@@ -321,8 +326,8 @@ class VantageGateway:
             await self._infusion.connected_future
             # Enable status feedback for button LEDs
             self.enable_status()
-            # Refresh state of devices
-            self.update_state(self._devices)
+            # Refresh state of entities
+            self.update_state(self._entities)
 
     def connect(self, flush=False):
         """
@@ -559,7 +564,7 @@ class Main:
         # the devices file
         self.write_devices_config(objects)
 
-    def launch_gateway(self, devices):
+    def launch_gateway(self, entities, objects):
         """
         Start the gateway
         """
@@ -567,7 +572,7 @@ class Main:
         self._log.debug("launch_gateway")
         if self.use_short_device_names is None:
             self.use_short_device_names = self.cfg["vantage"].get("short-names")
-        gateway = VantageGateway(self.cfg, devices, self.protocol,
+        gateway = VantageGateway(self.cfg, entities, objects, self.protocol,
                                  self.use_short_device_names)
         gateway.on_vantage_config_changed = self.on_vantage_config_changed
         try:
@@ -610,7 +615,7 @@ class Main:
             self.write_devices_config(vantage_cfg.objects)
 
         # Launch the gateway
-        self.launch_gateway(vantage_cfg.devices)
+        self.launch_gateway(vantage_cfg.entities, vantage_cfg.objects)
 
 ### Main programm
 if __name__ == '__main__':

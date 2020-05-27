@@ -98,14 +98,14 @@ class InFusionConfig:
             raise ConfigException("Zeroconf or IP/Port is required")
 
         self.updated = False
-        self.devices = None
+        self.entities = None
         self.infusion_memory_valid = False
         self.objects = None
 
         enabled_devices = self.get_enabled_devices(cfg)
 
         # Read configured devices
-        self._log.debug("Reading devices configureation...")
+        self._log.debug("Reading devices configuration...")
         if devicesFile:
             try:
                 self._log.debug("Try devices configuration %s", devicesFile)
@@ -118,7 +118,7 @@ class InFusionConfig:
             except IOError as err:
                 self._log.warning("Failed read %s, %s", devicesFile, str(err))
         if self.objects:
-            self.devices = self.filter_objects(enabled_devices, self.objects)
+            self.entities = self.filter_objects(enabled_devices, self.objects)
             return # Valid devices configuration found
 
         # Prefer Design Center configuration file if available.
@@ -154,7 +154,7 @@ class InFusionConfig:
                 self.read_infusion_memory(ip, port)
 
         # Filter out the devices we do not want to enable
-        self.devices = self.filter_objects(enabled_devices, self.objects)
+        self.entities = self.filter_objects(enabled_devices, self.objects)
 
         self.site_name = self.lookup_site(self.objects)
         self.updated = True
@@ -301,13 +301,25 @@ class InFusionConfig:
                             obj_type = "Relay"
                     else:
                         obj_type = obj.tag
-                    name = obj.find('Name').text
-                    parent = obj.find('Area')
+                    name = obj.find('Name')
+                    if name is None or not name.text:
+                        continue
+                    objects[vid] = {"VID" : vid, "type" : obj_type,
+                                    "name" : name.text}
+
+                    parent = obj.find('Parent')
                     if parent is None:
-                        parent = obj.find('Parent')
-                    if parent is not None and name:
-                        objects[vid] = {"VID" : vid, "type" : obj_type,
-                                        "parent" : parent.text, "name" : name}
+                        parent = obj.find('Area')
+                    model = obj.find('Model')
+                    serial = obj.find('SerialNumber')
+                    if parent is not None:
+                        objects[vid]["parent"] = parent.text
+                    if model is not None:
+                        objects[vid]["model"] = model.text
+                    if serial is not None:
+                        objects[vid]["serial"] = serial.text
+                    objects[vid]["manufacturer"] = "Vantage"
+
         return objects
 
     # Eliminate leading/trailing whitespace, make lowercase, replace
@@ -330,9 +342,9 @@ class InFusionConfig:
     # Construct a full name from the item name and the "Area" hierarchy names
     #
     # returns: string
-    def create_fullname(self, objects, vid):
+    def process_hierarchy(self, objects, vid):
         """
-        Creates a long name from a device name and the heirarchy of
+        Creates a long name from a entity name and the heirarchy of
         Design Center 'Area' objects it is contained in
 
         param objects: dictionary of Design Center objects
@@ -340,50 +352,62 @@ class InFusionConfig:
         returns:       unique_id, long name string
         """
 
+        # Create fullname and fulluid based on "Area"
         fullname = name = objects[vid]["name"]
         fulluid = self.uidify(name)
-        next_vid = objects[vid]["parent"]
+        next_vid = objects[vid].get("parent")
         while next_vid in objects:
             # If Area and not root of hierarchy, prepend Area name
             if (objects[next_vid]["type"] == "Area" and
-                    objects[next_vid]["parent"] in objects):
+                    objects[next_vid].get("parent") in objects):
                 name = objects[next_vid]["name"]
                 fullname = name + ", " + fullname
                 fulluid = self.uidify(name) + "." + fulluid
-            next_vid = objects[next_vid]["parent"]
+            next_vid = objects[next_vid].get("parent")
         fulluid = fulluid + "." + vid
+
+        # Find device this entity is a part of
+        next_vid = objects[vid].get("parent")
+        while next_vid in objects:
+            # If Dimmer or Module, this is the device that owns the entity
+            if (objects[next_vid]["type"] == "Dimmer" or
+                    objects[next_vid]["type"] == "Module"):
+                objects[vid]["device_vid"] = next_vid
+                break
+            next_vid = objects[next_vid].get("parent")
+
         return (fulluid, fullname)
 
-    # Build device dictionary
+    # Build entity dictionary
     #
-    # Device names are not unique, so a unique device id (uid) is built
+    # Device names are not unique, so a unique entity id (uid) is built
     # by prefixing it's name with the "Area" hierarchy and sufixing with the
     # Design Center object ID.
     #
-    # returns: a dictionary of devices found
+    # returns: a dictionary of entities found
     #          Dictionary keys are Design Center object IDs (VID)
     def filter_objects(self, device_type_list, objects):
         """
-        Create a dictionary of devices from a dictionary of Design Center objects
+        Create a dictionary of entities from a dictionary of Design Center objects
         by filtering based on object 'type'
 
         param objects: dictionary of Design Center objects
-        returns:       dictionary of devices
+        returns:       dictionary of entities
         """
 
         self._log.debug("filter_objects")
-        devices = {}
-        unique_devices = {}
+        entities = {}
+        unique_entities = {}
         for vid, item in objects.items():
-            uid, fullname = self.create_fullname(objects, vid)
+            uid, fullname = self.process_hierarchy(objects, vid)
             item["fullname"] = fullname
             item["uid"] = uid
             if item["type"] in device_type_list:
-                unique_devices[uid] = item
-        for uid, item in unique_devices.items():
+                unique_entities[uid] = item
+        for uid, item in unique_entities.items():
             vid = item["VID"]
-            devices[vid] = item
-        return devices
+            entities[vid] = item
+        return entities
 
     # Find the name of the root object in the Design Center configuration.
     # This will be used as the site name if not provided in this modules
@@ -401,12 +425,12 @@ class InFusionConfig:
 
         self._log.debug("lookup_site")
         site_name = "Default"
-        vid = next(iter(self.devices.values()))["VID"]
-        next_vid = objects[vid]["parent"]
+        vid = next(iter(self.entities.values()))["VID"]
+        next_vid = objects[vid].get("parent")
         while next_vid in objects:
             if objects[next_vid]["type"] == "Area":
                 site_name = objects[next_vid]["name"]
-            next_vid = objects[next_vid]["parent"]
+            next_vid = objects[next_vid].get("parent")
         return site_name
 
 class InFusionClient(asyncio.Protocol):
@@ -581,7 +605,7 @@ class InFusionClient(asyncio.Protocol):
         Decode a status message from Vantage inFusion
 
         param line: the status line to decode
-        returns:    device_type, vid, state
+        returns:    entity_type, vid, state
         """
 
         vid, state = self.decode_button_state(line)
@@ -606,10 +630,10 @@ class InFusionClient(asyncio.Protocol):
         while line:
             line = line.decode('utf-8').rstrip()
             self._log.debug("line: %s", line)
-            device_type, vid, state = self.decode_state(line)
-            if device_type and vid and state:
+            entity_type, vid, state = self.decode_state(line)
+            if entity_type and vid and state:
                 if self.on_state is not None:
-                    self.on_state(device_type, vid, state)
+                    self.on_state(entity_type, vid, state)
             else:
                 if self.on_unhandled is not None:
                     self.on_unhandled(line)
