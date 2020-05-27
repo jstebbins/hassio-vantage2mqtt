@@ -1,5 +1,5 @@
 """
-HomeAssistant MQTT Discovery and device control
+HomeAssistant MQTT Discovery and entity control
 """
 
 import json
@@ -105,10 +105,10 @@ class MQTTClient:
 
 class HomeAssistant(MQTTClient):
     """
-    HomeAssistant protocol MQTT device discovery adapter
+    HomeAssistant protocol MQTT entity discovery adapter
     """
 
-    # Register devices with a 'HomeAssistant' compatible controller
+    # Register entities with a 'HomeAssistant' compatible controller
     def __init__(self, site_name, mqttCfg):
         """
         param site_name: site name, used as component of MQTT topics
@@ -119,197 +119,215 @@ class HomeAssistant(MQTTClient):
         self._log = logging.getLogger("homeassistant")
         self._site_name = site_name
 
-        # Subscribe any device, any VID, all commands
+        # Subscribe any entity, any VID, all commands
         # Catch-all for anything unexpected, logged when debug enabled
         self.subscribe_topic = self.gateway_topic("+", "+", "#")
         # Topic filter for all expected commands to inFusion
         self.filter_topic = self.gateway_topic("+", "+", "+")
 
-    def topic(self, root, device_name, vid, command):
+    def topic(self, root, entity_name, vid, command):
         """
         Generic topic
-        Topic format "<domain>/<device type>/<site>/<VID>/<command>
+        Topic format "<domain>/<entity type>/<site>/<VID>/<command>
         domain       - "homeassistant" or "vantage"
-        device types - HA device types, e.g. switch, light
+        entity types - HA entity types, e.g. switch, light
         site         - name defined by config
         VID          - VID from Vantage Design Center config
         commands     - e.g. config, set, state, brightness...
         """
-        return "%s/%s/%s/%s/%s" % (root, device_name,
+        return "%s/%s/%s/%s/%s" % (root, entity_name,
                                    self._site_name.lower(), vid, command)
 
-    def discovery_topic(self, device_name, vid, command):
+    def discovery_topic(self, entity_name, vid, command):
         """
         Home Assistant Topics
-        Format       - "homeassistant/<device type>/<site>/<VID>/<command>
-        device types - HA device types, e.g. switch, light
+        Format       - "homeassistant/<entity type>/<site>/<VID>/<command>
+        entity types - HA entity types, e.g. switch, light
         site         - name defined by config
         VID          - VID from Vantage Design Center config
         commands     - config
         """
 
-        return self.topic("homeassistant", device_name, vid, command)
+        return self.topic("homeassistant", entity_name, vid, command)
 
-    def gateway_topic(self, device_name, vid, command):
+    def gateway_topic(self, entity_name, vid, command):
         """
         Gateway Topics
-        Format       - "vantage/<device type>/<site>/<VID>/<command or status>"
-        device types - HA device types, e.g. switch, light
+        Format       - "vantage/<entity type>/<site>/<VID>/<command or status>"
+        entity types - HA entity types, e.g. switch, light
         site         - name defined by config
         VID          - VID from Vantage Design Center config
-        commands     - vary by device type
+        commands     - vary by entity type
             switch   - set
             light    - set, brightness
-        status       - vary by device type
+        status       - vary by entity type
             switch   - state
             light    - state, brightness_state
         """
 
-        return self.topic("vantage", device_name, vid, command)
+        return self.topic("vantage", entity_name, vid, command)
 
-    def gateway_device_state_topic(self, device_type, vid):
+    def gateway_entity_state_topic(self, entity_type, vid):
         """
         Construct a state topic for this protocol
         Users of HomeAssistant class call this to obtain a properly
-        formatted device state topic for the HomeAssistant protocol
+        formatted entity state topic for the HomeAssistant protocol
         """
 
-        return self.gateway_topic(device_type, vid, "state")
+        return self.gateway_topic(entity_type, vid, "state")
 
-    def register_light(self, device, short_names=False, flush=False):
+    def add_device_info(self, config, device, names):
+        if device is not None:
+            config["device"] = {
+                "name"        : device[names],
+                "manufacturer": "Vantage"
+            }
+            model = device.get("model")
+            serial = device.get("serial")
+            if serial:
+                config["device"]["identifiers"] = serial
+            else:
+                config["device"]["identifiers"] = device["uid"]
+            if model:
+                config["device"]["model"] = model
+
+    def register_light(self, entity, device, short_names=False, flush=False):
         """
         Register a Vantage inFusion light with HomeAssistant controller
 
-        param device:      device dictionary
-        param short_names: use short names when registering devices
-        param flush:       flush old devices settings from controller
+        param entity:      entity dictionary
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
         """
 
         self._log.debug("register_light")
-        if device["type"] not in ("DimmerLight", "Light"):
+        if entity["type"] not in ("DimmerLight", "Light"):
             return # Only lights
+
+        vid = entity["VID"]
+        topic_config = self.discovery_topic("light", vid, "config")
+        if flush:
+            self.publish(topic_config, "")
+            return
 
         if short_names:
             names = "name"
         else:
             names = "fullname"
-        vid = device["VID"]
-        topic_config = self.discovery_topic("light", vid, "config")
         config = {
             "schema"                   : "json",
-            "unique_id"                : device["uid"],
-            "name"                     : device[names],
+            "unique_id"                : entity["uid"],
+            "name"                     : entity[names],
             "command_topic"            : self.gateway_topic("light", vid, "set"),
             "state_topic"              : self.gateway_topic("light", vid, "state"),
             "qos"                      : 1,
             "retain"                   : True,
-            "device"                   : {
-                "identifiers"          : device["uid"],
-                "name"                 : device[names]
-            }
         }
-        if device["type"] == "DimmerLight":
+        self.add_device_info(config, device, names)
+        if entity["type"] == "DimmerLight":
             config["brightness"] = True
             config["brightness_scale"] = 100
         else:
             config["brightness"] = False
-        config_json = json.dumps(config)
-        if flush:
-            self.publish(topic_config, "")
-        else:
-            self.publish(topic_config, config_json)
 
-    def register_button(self, device, short_names=False, flush=False):
+        config_json = json.dumps(config)
+        self.publish(topic_config, config_json)
+
+    def register_button(self, entity, short_names=False, flush=False):
         """
         Register a Vantage inFusion button with HomeAssistant controller
 
-        param device:      device dictionary
-        param short_names: use short names when registering devices
-        param flush:       flush old devices settings from controller
+        param entity:      entity dictionary
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
         """
 
         self._log.debug("register_button")
-        if device["type"] != "Button":
+        if entity["type"] != "Button":
             return # Only buttons
+
+        vid = entity["VID"]
+        topic_config = self.discovery_topic("switch", vid, "config")
+        if flush:
+            self.publish(topic_config, "")
+            return
 
         if short_names:
             names = "name"
         else:
             names = "fullname"
-        vid = device["VID"]
-        topic_config = self.discovery_topic("switch", vid, "config")
         config = {
-            "unique_id"     : device["uid"],
-            "name"          : device[names],
+            "unique_id"     : entity["uid"],
+            "name"          : entity[names],
             "command_topic" : self.gateway_topic("switch", vid, "set"),
             "state_topic"   : self.gateway_topic("switch", vid, "state"),
             "icon"          : "mdi:lightbulb",
             "qos"           : 1,
             "retain"        : True,
-            "device"        : {
-                "identifiers" : device["uid"],
-                "name"        : device[names]
-            }
         }
-        config_json = json.dumps(config)
-        if flush:
-            self.publish(topic_config, "")
-        else:
-            self.publish(topic_config, config_json)
+        self.add_device_info(config, device, names)
 
-    def register_motor(self, device, short_names=False, flush=False):
+        config_json = json.dumps(config)
+        self.publish(topic_config, config_json)
+
+    def register_motor(self, entity, short_names=False, flush=False):
         """
         Register a Vantage inFusion motor with HomeAssistant controller
 
-        param device:      device dictionary
-        param short_names: use short names when registering devices
-        param flush:       flush old devices settings from controller
+        param entity:      entity dictionary
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
         """
 
-    def register_relay(self, device, short_names=False, flush=False):
+    def register_relay(self, entity, short_names=False, flush=False):
         """
         Register a Vantage inFusion relay with HomeAssistant controller
 
-        param device:      device dictionary
-        param short_names: use short names when registering devices
-        param flush:       flush old devices settings from controller
+        param entity:      entity dictionary
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
         """
 
-    def register_devices(self, devices, short_names=False, flush=False):
+    def register_entities(self, entities, objects,
+                          short_names=False, flush=False):
         """
-        Register Vantage inFusion devices with HomeAssistant controller
+        Register Vantage inFusion entities with HomeAssistant controller
 
-        param devices:     dictionary of devices
-        param short_names: use short names when registering devices
-        param flush:       flush old devices settings from controller
-        """
-
-        for vid, device in devices.items():
-            if device["type"] == "Button":
-                self.register_button(device, short_names, flush)
-            elif device["type"] in ("DimmerLight", "Light"):
-                self.register_light(device, short_names, flush)
-            elif device["type"] == "Motor":
-                self.register_motor(device, short_names, flush)
-            elif device["type"] == "Relay":
-                self.register_relay(device, short_names, flush)
-
-    def flush_devices(self, devices):
-        """
-        Flush old device settings from HomeAssistant controller
-
-        param devices: list of devices to flush
+        param entities:    dictionary of entities
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
         """
 
-        self._log.debug("flush_devices")
-        self.register_devices(devices, flush=True)
+        for vid, entity in entities.items():
+            device_vid = entity.get("device_vid")
+            device = None
+            if device_vid is not None:
+                device = objects.get(device_vid)
+            if entity["type"] == "Button":
+                self.register_button(entity, device, short_names, flush)
+            elif entity["type"] in ("DimmerLight", "Light"):
+                self.register_light(entity, device, short_names, flush)
+            elif entity["type"] == "Motor":
+                self.register_motor(entity, device, short_names, flush)
+            elif entity["type"] == "Relay":
+                self.register_relay(entity, device, short_names, flush)
+
+    def flush_entities(self, entities):
+        """
+        Flush old entity settings from HomeAssistant controller
+
+        param entities: list of entities to flush
+        """
+
+        self._log.debug("flush_entities")
+        self.register_entities(entities, flush=True)
 
     def split_topic(self, topic):
         """
         Parse parameters from a HomeAssistant MQTT topic
 
         param topic: the MQTT topic
-        returns:     device type, VID, command
+        returns:     entity type, VID, command
         """
 
         pat = self.gateway_topic("([^/]+)", "([^/]+)", "([^/]+)")
@@ -319,18 +337,18 @@ class HomeAssistant(MQTTClient):
         self._log.error("split_topic: match failed")
         return None, None, None
 
-    def translate_state(self, device_type, state):
+    def translate_state(self, entity_type, state):
         """
-        Translates internal device state to a HomeAssistant MQTT state value
+        Translates internal entity state to a HomeAssistant MQTT state value
         It just happens that internal state very closely mirrors HomeAssistant
         state values
 
         Other protocols, e.g. Homie, would do more here.
         """
 
-        if device_type == "switch":
+        if entity_type == "switch":
             return state.get("state")
-        if device_type == "light":
+        if entity_type == "light":
             return json.dumps(state)
-        self._log.warning('Unknown device type "%s"', device_type)
+        self._log.warning('Unknown entity type "%s"', entity_type)
         return None
