@@ -176,20 +176,33 @@ class HomeAssistant(MQTTClient):
 
         return self.gateway_topic(entity_type, vid, "state")
 
-    def add_device_info(self, config, device, names):
-        if device is not None:
-            config["device"] = {
-                "name"        : device[names],
-                "manufacturer": "Vantage"
-            }
-            model = device.get("model")
-            serial = device.get("serial")
-            if serial:
-                config["device"]["identifiers"] = serial
-            else:
-                config["device"]["identifiers"] = device["uid"]
-            if model:
-                config["device"]["model"] = model
+    @staticmethod
+    def add_device_info(config, device, names):
+        """
+        Adds device dictionary to endity
+
+        param config: registration config dictionary
+        param device: details of device to add
+        param names:  'name' for shortnames, 'fullname' for longnames
+        """
+
+        if device is None:
+            return
+
+        config["device"] = {
+            "name"        : device[names]
+        }
+        manufacturer = device.get("manufacturer")
+        model = device.get("model")
+        serial = device.get("serial")
+        if serial:
+            config["device"]["identifiers"] = serial
+        else:
+            config["device"]["identifiers"] = device["uid"]
+        if manufacturer:
+            config["device"]["manufacturer"] = manufacturer
+        if model:
+            config["device"]["model"] = model
 
     def register_light(self, entity, device, short_names=False, flush=False):
         """
@@ -223,17 +236,17 @@ class HomeAssistant(MQTTClient):
             "qos"                      : 1,
             "retain"                   : True,
         }
-        self.add_device_info(config, device, names)
         if entity["type"] == "DimmerLight":
             config["brightness"] = True
             config["brightness_scale"] = 100
         else:
             config["brightness"] = False
+        self.add_device_info(config, device, names)
 
         config_json = json.dumps(config)
         self.publish(topic_config, config_json)
 
-    def register_button(self, entity, short_names=False, flush=False):
+    def register_button(self, entity, device, short_names=False, flush=False):
         """
         Register a Vantage inFusion button with HomeAssistant controller
 
@@ -270,7 +283,7 @@ class HomeAssistant(MQTTClient):
         config_json = json.dumps(config)
         self.publish(topic_config, config_json)
 
-    def register_motor(self, entity, short_names=False, flush=False):
+    def register_motor(self, entity, device, short_names=False, flush=False):
         """
         Register a Vantage inFusion motor with HomeAssistant controller
 
@@ -279,7 +292,7 @@ class HomeAssistant(MQTTClient):
         param flush:       flush old entities settings from controller
         """
 
-    def register_relay(self, entity, short_names=False, flush=False):
+    def register_relay(self, entity, device, short_names=False, flush=False):
         """
         Register a Vantage inFusion relay with HomeAssistant controller
 
@@ -298,10 +311,10 @@ class HomeAssistant(MQTTClient):
         param flush:       flush old entities settings from controller
         """
 
-        for vid, entity in entities.items():
+        for _, entity in entities.items():
             device_vid = entity.get("device_vid")
             device = None
-            if device_vid is not None:
+            if device_vid is not None and objects is not None:
                 device = objects.get(device_vid)
             if entity["type"] == "Button":
                 self.register_button(entity, device, short_names, flush)
@@ -320,7 +333,7 @@ class HomeAssistant(MQTTClient):
         """
 
         self._log.debug("flush_entities")
-        self.register_entities(entities, flush=True)
+        self.register_entities(entities, None, flush=True)
 
     def split_topic(self, topic):
         """

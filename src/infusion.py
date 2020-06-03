@@ -318,6 +318,7 @@ class InFusionConfig:
                         objects[vid]["model"] = model.text
                     if serial is not None:
                         objects[vid]["serial"] = serial.text
+                    objects[vid]["manufacturer"] = "Vantage"
 
         return objects
 
