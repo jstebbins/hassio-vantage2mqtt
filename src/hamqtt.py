@@ -13,7 +13,7 @@ class MQTTClient:
     Base class used by HomeAssistant
     """
 
-    def __init__(self, mqttCfg):
+    def __init__(self, mqttCfg, dry_run=False):
         """
         param mqttCfg:   dictionary of MQTT connection settings
         """
@@ -30,6 +30,7 @@ class MQTTClient:
         self.filter_topic = "vantage/site/+/+"
         self.on_unfiltered = None
         self.on_filtered = None
+        self._dry_run = dry_run
 
     def on_connect(self):
         """
@@ -49,6 +50,9 @@ class MQTTClient:
         """
         Connect to MQTT Broker, initialize callbacks, and listen for topics
         """
+
+        if (self._dry_run):
+            return
 
         self._log.debug("connect")
         if self._connect_attempted:
@@ -87,6 +91,8 @@ class MQTTClient:
         """
         close the MQTT client connection
         """
+        if (self._dry_run):
+            return
         self._client.disconnect()
 
     # Wrapper for MQTT publish, add logging
@@ -101,6 +107,8 @@ class MQTTClient:
         """
 
         self._log.debug("publish: %s -> %s", topic, value)
+        if (self._dry_run):
+            return
         self._client.publish(topic, value, qos=qos, retain=retain)
 
 class HomeAssistant(MQTTClient):
@@ -109,13 +117,13 @@ class HomeAssistant(MQTTClient):
     """
 
     # Register entities with a 'HomeAssistant' compatible controller
-    def __init__(self, site_name, mqttCfg):
+    def __init__(self, site_name, mqttCfg, dry_run=False):
         """
         param site_name: site name, used as component of MQTT topics
         param mqttCfg:   dictionary of MQTT connection settings
         """
 
-        super().__init__(mqttCfg)
+        super().__init__(mqttCfg, dry_run)
         self._log = logging.getLogger("homeassistant")
         self._site_name = site_name
 
