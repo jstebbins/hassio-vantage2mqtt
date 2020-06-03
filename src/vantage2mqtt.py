@@ -22,7 +22,7 @@ class VantageGateway:
     PROTO_HOMIE = 1
     PROTO_HOMEASSISTANT = 2
 
-    def __init__(self, cfg, entities, objects, protocol, short_names=False):
+    def __init__(self, cfg, entities, objects, protocol, short_names=False, dry_run=False):
         """
         param cfg:      dictionary of gateway settings
         param protocol: MQTT device discovery protocol to use
@@ -34,7 +34,7 @@ class VantageGateway:
         self._site_name = cfg["vantage"]["site-name"]
 
         if self.protocol == self.PROTO_HOMEASSISTANT:
-            self._proto = HomeAssistant(self._site_name, cfg["mqtt"])
+            self._proto = HomeAssistant(self._site_name, cfg["mqtt"], dry_run)
         self._proto.on_filtered = self.on_mqtt_filtered
         self._proto.on_unfiltered = self.on_mqtt_unfiltered
         self._min_reconnect_interval = 1
@@ -421,8 +421,8 @@ class Main:
         self._log = logging.getLogger("main")
         try:
             opts, _ = getopt.getopt(
-                argv[1:], "hvdcw:c:fs",
-                ["help", "verbose", "debug", "cache", "write=",
+                argv[1:], "hvdncw:c:fs",
+                ["help", "verbose", "debug", "dry-run", "cache", "write=",
                  "config=", "flush", "homeassistant", "shortnames"])
 
         except getopt.GetoptError:
@@ -431,6 +431,7 @@ class Main:
 
         self.cfg = {}
         self.verbose = None
+        self._dry_run = None
         self.dc_save = None
         self.cache_dc = None
         self.flush_devices = False
@@ -445,6 +446,8 @@ class Main:
                 self.verbose = logging.INFO
             elif opt in ("-d", "--debug"):
                 self.verbose = logging.DEBUG
+            elif opt in ("-n", "--dry-run"):
+                self._dry_run = True
             elif opt in ("-w", "--write"):
                 self.dc_save = arg
             elif opt in ("-c", "--config"):
@@ -565,7 +568,7 @@ class Main:
         # the devices file
         self.write_devices_config(objects)
 
-    def launch_gateway(self, entities, objects):
+    def launch_gateway(self, entities, objects, dry_run):
         """
         Start the gateway
         """
@@ -574,7 +577,7 @@ class Main:
         if self.use_short_device_names is None:
             self.use_short_device_names = self.cfg["vantage"].get("short-names")
         gateway = VantageGateway(self.cfg, entities, objects, self.protocol,
-                                 self.use_short_device_names)
+                                 self.use_short_device_names, dry_run)
         gateway.on_vantage_config_changed = self.on_vantage_config_changed
         try:
             gateway.connect(self.flush_devices)
@@ -616,7 +619,7 @@ class Main:
             self.write_devices_config(vantage_cfg.objects)
 
         # Launch the gateway
-        self.launch_gateway(vantage_cfg.entities, vantage_cfg.objects)
+        self.launch_gateway(vantage_cfg.entities, vantage_cfg.objects, self._dry_run)
 
 ### Main programm
 if __name__ == '__main__':
