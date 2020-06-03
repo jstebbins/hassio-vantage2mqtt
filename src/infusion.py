@@ -139,8 +139,8 @@ class InFusionConfig:
             if zeroconf:
                 self._log.debug("Lookup _aci service via zeroconf")
                 zc = Zeroconf()
-                browser = ServiceBrowser(zc, "_aci._tcp.local.",
-                                         handlers=[self.on_zeroconf_service_state_change])
+                ServiceBrowser(zc, "_aci._tcp.local.",
+                               handlers=[self.on_zeroconf_service_state_change])
                 timeout = 10
                 self._reading = False
                 while self.objects is None and (self._reading or timeout):
@@ -180,7 +180,8 @@ class InFusionConfig:
             except InFusionException as err:
                 self._log.warning("Error reading inFusion memory: %s", err)
 
-    def get_enabled_devices(self, cfg):
+    @staticmethod
+    def get_enabled_devices(cfg):
         """
         Creates a list of enabled devices from config booleans
 
@@ -326,7 +327,8 @@ class InFusionConfig:
     # punctuation and internal spaces with '_'
     #
     # returns: string
-    def uidify(self, name):
+    @staticmethod
+    def uidify(name):
         """
         Make a string suitable for using as a 'unique_id'
         Substitutes punctuation and white space to '_'
@@ -528,8 +530,8 @@ class InFusionClient(asyncio.Protocol):
             self._log.debug("Lookup service _hc via zeroconf")
             self.zeroconf_future = self._loop.create_future()
             zc = Zeroconf()
-            browser = ServiceBrowser(zc, "_hc._tcp.local.",
-                                     handlers=[self.on_zeroconf_service_state_change])
+            ServiceBrowser(zc, "_hc._tcp.local.",
+                           handlers=[self.on_zeroconf_service_state_change])
             self._log.debug("await zeroconf_future")
             await self.zeroconf_future
             self._log.debug("zeroconf_future done")
@@ -561,7 +563,8 @@ class InFusionClient(asyncio.Protocol):
         self._log.debug("Vantage Command: %s", command)
         self._transport.write(bytes(command + "\r", 'utf-8'))
 
-    def decode_button_state(self, line):
+    @staticmethod
+    def decode_button_state(line):
         """
         Decode a status message from Vantage inFusion
 
@@ -580,7 +583,8 @@ class InFusionClient(asyncio.Protocol):
                 return vid, {"state" : state}
         return None, None
 
-    def decode_load_state(self, line):
+    @staticmethod
+    def decode_load_state(line):
         """
         Decode a status message from Vantage inFusion
 
