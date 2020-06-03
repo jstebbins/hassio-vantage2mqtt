@@ -79,6 +79,7 @@ class VantageGateway:
                 self.on_vantage_config_changed(vantage_cfg.xml_config,
                                                vantage_cfg.objects)
             self._entities = vantage_cfg.entities
+            self._objects = vantage_cfg.objects
 
     def switch_command(self, vid, command):
         """
