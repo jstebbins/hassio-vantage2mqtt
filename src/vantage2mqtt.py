@@ -170,6 +170,7 @@ class VantageGateway:
 
     # Translate MQTT command and send to vantage
     def on_mqtt_filtered(self, mosq, obj, msg):
+        #pylint: disable=unused-argument
         """
         MQTT callback for 'button set' topics
 
@@ -195,6 +196,7 @@ class VantageGateway:
             self._log.warning('Unknown entity type "%s"', entity_type)
 
     def on_mqtt_unfiltered(self, mosq, obj, msg):
+        #pylint: disable=unused-argument
         """
         MQTT callback for topics not handled by any other callbacks
 
@@ -419,7 +421,7 @@ class Main:
 
         self._log = logging.getLogger("main")
         try:
-            opts, args = getopt.getopt(
+            opts, _ = getopt.getopt(
                 argv[1:], "hvdcw:c:fs",
                 ["help", "verbose", "debug", "cache", "write=",
                  "config=", "flush", "homeassistant", "shortnames"])
