@@ -133,6 +133,9 @@ class InFusionConfig:
             except ET.ParseError as err:
                 self._log.warning("Failed to parse %s, %s",
                                   xml_config_file, str(err))
+            except OSError as err:
+                self._log.warning("Could not read %s, %s",
+                                  xml_config_file, str(err))
 
         if self.objects is None:
             # Try Vantage inFusion memory card
