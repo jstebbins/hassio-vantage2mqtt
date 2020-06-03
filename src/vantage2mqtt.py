@@ -157,7 +157,6 @@ class VantageGateway:
                                               self.short_names)
             elif command == "reload":
                 # Force reloading from inFusion memory card
-                self._proto.flush_entities(self._entities)
                 try:
                     self.read_vantage_config()
                 except (InFusionException, ConfigException):
