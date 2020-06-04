@@ -282,7 +282,7 @@ class HomeAssistant(MQTTClient):
             "name"          : entity[names],
             "command_topic" : self.gateway_topic("switch", vid, "set"),
             "state_topic"   : self.gateway_topic("switch", vid, "state"),
-            "icon"          : "mdi:lightbulb",
+            "icon"          : "mdi:light-switch",
             "qos"           : 1,
             "retain"        : True,
         }
