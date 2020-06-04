@@ -34,7 +34,7 @@ class VantageGateway:
         self._site_name = cfg["vantage"]["site-name"]
 
         if self.protocol == self.PROTO_HOMEASSISTANT:
-            self._proto = HomeAssistant(self._site_name, cfg["mqtt"], dry_run)
+            self._proto = HomeAssistant("Vantage", self._site_name, cfg["mqtt"], dry_run)
         self._proto.on_filtered = self.on_mqtt_filtered
         self._proto.on_unfiltered = self.on_mqtt_unfiltered
         self._min_reconnect_interval = 1
@@ -81,35 +81,35 @@ class VantageGateway:
             self._entities = vantage_cfg.entities
             self._objects = vantage_cfg.objects
 
-    def switch_command(self, vid, command):
+    def switch_command(self, oid, command):
         """
         process MQTT command for a switch
         """
 
-        entity = self._entities.get(vid)
-        if vid not in self._entities or command == "status":
+        entity = self._entities.get(oid)
+        if oid not in self._entities or command == "status":
             return
         # Validate entity is a button
         if entity["type"] != "Button":
             return
 
-        self._log.debug("switch command: %s %s", command, vid)
+        self._log.debug("switch command: %s %s", command, oid)
         if command == "set":
-            self._infusion.send_command("BTN %s" % vid)
+            self._infusion.send_command("BTN %s" % oid)
 
-    def light_command(self, vid, command, param):
+    def light_command(self, oid, command, param):
         """
         process MQTT command for a switch
         """
 
-        entity = self._entities.get(vid)
+        entity = self._entities.get(oid)
         if not entity or command == "status":
             return
         # Validate entity is a light
         if entity["type"] not in ("Light", "DimmerLight"):
             return
 
-        self._log.debug("light command: %s %s %s", vid, command, str(param))
+        self._log.debug("light command: %s %s %s", oid, command, str(param))
         if command == "set":
             try:
                 value = json.loads(param)
@@ -127,18 +127,18 @@ class VantageGateway:
                 brightness = 100
             if entity["type"] == "DimmerLight" and transition:
                 self._infusion.send_command("RAMPLOAD %s %d %d" %
-                                            (vid, brightness, transition))
+                                            (oid, brightness, transition))
             else:
-                self._infusion.send_command("LOAD %s %d" % (vid, brightness))
+                self._infusion.send_command("LOAD %s %d" % (oid, brightness))
 
-    def site_command(self, vid, command, param):
+    def site_command(self, oid, command, param):
         """
         Control commands that can be manually sent via MQTT topic
         'vantage/site/<SiteName>/all/<command>' to reconfigure
         the gateway
         """
 
-        if vid == "all":
+        if oid == "all":
             if command == "flush":
                 # Force flushing of currently known inFusion entities from HA
                 self._proto.flush_entities(self._entities)
@@ -182,15 +182,15 @@ class VantageGateway:
         self._log.debug(">vantage: %s - %s", msg.topic, value)
         if self.wait_for_settle:
             return
-        entity_type, vid, command = self._proto.split_topic(msg.topic)
-        if not vid or not command:
+        entity_type, oid, command = self._proto.split_topic(msg.topic)
+        if not oid or not command:
             return
         if entity_type == "switch":
-            self.switch_command(vid, command)
+            self.switch_command(oid, command)
         elif entity_type == "light":
-            self.light_command(vid, command, value)
+            self.light_command(oid, command, value)
         elif entity_type == "site":
-            self.site_command(vid, command, value)
+            self.site_command(oid, command, value)
         else:
             self._log.warning('Unknown entity type "%s"', entity_type)
 
@@ -207,15 +207,15 @@ class VantageGateway:
         mqttmsg = str(msg.payload.decode("utf-8"))
         self._log.debug(">unknown: %s - %s", msg.topic, mqttmsg)
 
-    def on_vantage_state(self, entity_type, vid, state):
+    def on_vantage_state(self, entity_type, oid, state):
         """
         Vantage callback for button status
 
-        param vid:   Vanntage inFusion entity ID
+        param oid:   Vanntage inFusion entity ID
         param onoff: button on/off state
         """
 
-        topic = self._proto.gateway_entity_state_topic(entity_type, vid)
+        topic = self._proto.gateway_entity_state_topic(entity_type, oid)
         value = self._proto.translate_state(entity_type, state)
         self._proto.publish(topic, value)
 
@@ -230,11 +230,11 @@ class VantageGateway:
         Update the controllers state for all buttons
         """
 
-        for vid, item in entities.items():
+        for oid, item in entities.items():
             if item["type"] == "Button":
-                self._infusion.send_command("GETLED %s" % vid)
+                self._infusion.send_command("GETLED %s" % oid)
             elif item["type"] in ("DimmerLight", "Light"):
-                self._infusion.send_command("GETLOAD %s" % vid)
+                self._infusion.send_command("GETLOAD %s" % oid)
 
     def connect_mqtt(self):
         """
@@ -383,6 +383,7 @@ class Main:
                     "ip" : {"type" : "string"},
                     "command_port" : {"type" : "number"},
                     "config_port" : {"type" : "number"},
+                    "skip-device-cache" : {"type" : "boolean"},
                     "dcconfig" : {"type" : "string"},
                     "dccache" : {"type" : "boolean"},
                     "debug" : {"type" : "boolean"},
@@ -496,7 +497,11 @@ class Main:
 
         try:
             dc = self.cfg["vantage"].get("dcconfig")
-            return InFusionConfig(self.cfg["vantage"], self.DEVICES_FILENAME, dc)
+            if self.cfg["vantage"].get("skip-device-cache"):
+                self._log.debug("Skipping device cache")
+                return InFusionConfig(self.cfg["vantage"], xml_config_file=dc)
+            return InFusionConfig(self.cfg["vantage"],
+                                  self.DEVICES_FILENAME, dc)
         except (InFusionException, ConfigException) as err:
             self._log.critical("Error: %s", str(err))
             sys.exit(1)

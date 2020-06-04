@@ -118,6 +118,7 @@ class InFusionConfig:
             except IOError as err:
                 self._log.warning("Failed read %s, %s", devicesFile, str(err))
         if self.objects:
+            self._log.debug("Using device cache %s", devicesFile)
             self.entities = self.filter_objects(enabled_devices, self.objects)
             return # Valid devices configuration found
 
@@ -265,14 +266,14 @@ class InFusionConfig:
     # Build object dictionary
     #
     # Object dictionary consists of all objects that have
-    # valid VID, Parent or Area, and Name
+    # valid OID, Parent or Area, and Name
     #
     # This dictionary only used as an intermediate data structure
     # to simplify and speed up looking up objects in the
     # Design Center configuration file
     #
     # returns: a dictionary of objects found
-    #          Dictionary keys are Design Center object IDs (VID)
+    #          Dictionary keys are Design Center object IDs (OID)
     def create_objects(self, xml_root):
         """
         Create a dictionary of Design Center objects from an xml tree
@@ -285,8 +286,8 @@ class InFusionConfig:
         for item in xml_root:
             if item.tag == "Objects":
                 for obj in item.iter(None):
-                    vid = obj.get('VID')
-                    if not vid:
+                    oid = obj.get('VID')
+                    if not oid:
                         continue
                     name = obj.find('Name').text
                     if obj.tag == "Load":
@@ -303,12 +304,14 @@ class InFusionConfig:
                         elif load_type in ("Low Voltage Relay",
                                            "High Voltage Relay"):
                             obj_type = "Relay"
+                    elif obj.tag == "Button":
+                        obj_type = "Switch"
                     else:
                         obj_type = obj.tag
                     name = obj.find('Name')
                     if name is None or not name.text:
                         continue
-                    objects[vid] = {"VID" : vid, "type" : obj_type,
+                    objects[oid] = {"OID" : oid, "type" : obj_type,
                                     "name" : name.text}
 
                     parent = obj.find('Parent')
@@ -317,17 +320,17 @@ class InFusionConfig:
                     model = obj.find('Model')
                     serial = obj.find('SerialNumber')
                     if parent is not None:
-                        objects[vid]["parent"] = parent.text
+                        objects[oid]["parent"] = parent.text
                     if (model is not None and model.text is not None and
                             model.text.strip() and
                             model.text != "Default"):
-                        objects[vid]["model"] = model.text
+                        objects[oid]["model"] = model.text
                     else:
-                        objects[vid]["model"] = obj_type
+                        objects[oid]["model"] = obj_type
                     if (serial is not None and serial.text is not None and
                             serial.text.strip()):
-                        objects[vid]["serial"] = serial.text
-                    objects[vid]["manufacturer"] = "Vantage"
+                        objects[oid]["serial"] = serial.text
+                    objects[oid]["manufacturer"] = "Vantage"
 
         return objects
 
@@ -352,41 +355,41 @@ class InFusionConfig:
     # Construct a full name from the item name and the "Area" hierarchy names
     #
     # returns: string
-    def process_hierarchy(self, objects, vid):
+    def process_hierarchy(self, objects, oid):
         """
         Creates a long name from a entity name and the heirarchy of
         Design Center 'Area' objects it is contained in
 
         param objects: dictionary of Design Center objects
-        param vid:     Design Center device ID
+        param oid:     Design Center device ID
         returns:       unique_id, long name string
         """
 
         # Create fullname and fulluid based on "Area"
-        fullname = name = objects[vid]["name"]
+        fullname = name = objects[oid]["name"]
         fulluid = self.uidify(name)
-        next_vid = objects[vid].get("parent")
-        while next_vid in objects:
+        next_oid = objects[oid].get("parent")
+        while next_oid in objects:
             # If Area and not root of hierarchy, prepend Area name
-            if (objects[next_vid]["type"] == "Area" and
-                    objects[next_vid].get("parent") in objects):
-                name = objects[next_vid]["name"]
+            if (objects[next_oid]["type"] == "Area" and
+                    objects[next_oid].get("parent") in objects):
+                name = objects[next_oid]["name"]
                 fullname = name + ", " + fullname
                 fulluid = self.uidify(name) + "." + fulluid
-            next_vid = objects[next_vid].get("parent")
-        fulluid = fulluid + "." + vid
+            next_oid = objects[next_oid].get("parent")
+        fulluid = fulluid + "." + oid
 
         # Find device this entity is a part of
-        next_vid = objects[vid].get("parent")
-        while next_vid in objects:
+        next_oid = objects[oid].get("parent")
+        while next_oid in objects:
             # If Dimmer or Module, this is the device that owns the entity
-            if (objects[next_vid]["type"] == "Dimmer" or
-                    objects[next_vid]["type"] == "Module" or
-                    objects[next_vid]["type"] == "LowVoltageRelayStation" or
-                    objects[next_vid]["type"] == "EqUX"):
-                objects[vid]["device_vid"] = next_vid
+            if (objects[next_oid]["type"] == "Dimmer" or
+                    objects[next_oid]["type"] == "Module" or
+                    objects[next_oid]["type"] == "LowVoltageRelayStation" or
+                    objects[next_oid]["type"] == "EqUX"):
+                objects[oid]["device_oid"] = next_oid
                 break
-            next_vid = objects[next_vid].get("parent")
+            next_oid = objects[next_oid].get("parent")
 
         return (fulluid, fullname)
 
@@ -397,7 +400,7 @@ class InFusionConfig:
     # Design Center object ID.
     #
     # returns: a dictionary of entities found
-    #          Dictionary keys are Design Center object IDs (VID)
+    #          Dictionary keys are Design Center object IDs (OID)
     def filter_objects(self, device_type_list, objects):
         """
         Create a dictionary of entities from a dictionary of Design Center objects
@@ -410,15 +413,15 @@ class InFusionConfig:
         self._log.debug("filter_objects")
         entities = {}
         unique_entities = {}
-        for vid, item in objects.items():
-            uid, fullname = self.process_hierarchy(objects, vid)
+        for oid, item in objects.items():
+            uid, fullname = self.process_hierarchy(objects, oid)
             item["fullname"] = fullname
             item["uid"] = uid
             if item["type"] in device_type_list:
                 unique_entities[uid] = item
         for uid, item in unique_entities.items():
-            vid = item["VID"]
-            entities[vid] = item
+            oid = item["OID"]
+            entities[oid] = item
         return entities
 
     # Find the name of the root object in the Design Center configuration.
@@ -437,12 +440,12 @@ class InFusionConfig:
 
         self._log.debug("lookup_site")
         site_name = "Default"
-        vid = next(iter(self.entities.values()))["VID"]
-        next_vid = objects[vid].get("parent")
-        while next_vid in objects:
-            if objects[next_vid]["type"] == "Area":
-                site_name = objects[next_vid]["name"]
-            next_vid = objects[next_vid].get("parent")
+        oid = next(iter(self.entities.values()))["OID"]
+        next_oid = objects[oid].get("parent")
+        while next_oid in objects:
+            if objects[next_oid]["type"] == "Area":
+                site_name = objects[next_oid]["name"]
+            next_oid = objects[next_oid].get("parent")
         return site_name
 
 class InFusionClient(asyncio.Protocol):
@@ -579,18 +582,18 @@ class InFusionClient(asyncio.Protocol):
         Decode a status message from Vantage inFusion
 
         param line: the status line to decode
-        returns:    vid, state
+        returns:    oid, state
         """
 
         if line:
             pat = "(S:|R:GET)LED ([0-9]+) ([0-1]) .*"
             m = re.search(pat, line)
             if m:
-                vid = m.group(2)
+                oid = m.group(2)
                 state = "OFF"
                 if m.group(3) == "1":
                     state = "ON"
-                return vid, {"state" : state}
+                return oid, {"state" : state}
         return None, None
 
     @staticmethod
@@ -599,19 +602,19 @@ class InFusionClient(asyncio.Protocol):
         Decode a status message from Vantage inFusion
 
         param line: the status line to decode
-        returns:    vid, state
+        returns:    oid, state
         """
 
         if line:
             pat = "(S:|R:GET)LOAD ([0-9]+) ([0-9]+)\\.[0-9]*"
             m = re.search(pat, line)
             if m:
-                vid = m.group(2)
+                oid = m.group(2)
                 state = "OFF"
                 brightness = int(m.group(3))
                 if brightness > 0:
                     state = "ON"
-                return vid, {"brightness" : brightness, "state" : state}
+                return oid, {"brightness" : brightness, "state" : state}
         return None, None
 
     def decode_state(self, line):
@@ -619,15 +622,15 @@ class InFusionClient(asyncio.Protocol):
         Decode a status message from Vantage inFusion
 
         param line: the status line to decode
-        returns:    entity_type, vid, state
+        returns:    entity_type, oid, state
         """
 
-        vid, state = self.decode_button_state(line)
-        if vid and state:
-            return "switch", vid, state
-        vid, state = self.decode_load_state(line)
-        if vid and state:
-            return "light", vid, state
+        oid, state = self.decode_button_state(line)
+        if oid and state:
+            return "switch", oid, state
+        oid, state = self.decode_load_state(line)
+        if oid and state:
+            return "light", oid, state
         return None, None, None
 
     def data_received(self, data):
@@ -644,10 +647,10 @@ class InFusionClient(asyncio.Protocol):
         while line:
             line = line.decode('utf-8').rstrip()
             self._log.debug("line: %s", line)
-            entity_type, vid, state = self.decode_state(line)
-            if entity_type and vid and state:
+            entity_type, oid, state = self.decode_state(line)
+            if entity_type and oid and state:
                 if self.on_state is not None:
-                    self.on_state(entity_type, vid, state)
+                    self.on_state(entity_type, oid, state)
             else:
                 if self.on_unhandled is not None:
                     self.on_unhandled(line)
