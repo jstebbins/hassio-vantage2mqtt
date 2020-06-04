@@ -318,9 +318,14 @@ class InFusionConfig:
                     serial = obj.find('SerialNumber')
                     if parent is not None:
                         objects[vid]["parent"] = parent.text
-                    if model is not None:
+                    if (model is not None and model.text is not None and
+                            model.text.strip() and
+                            model.text != "Default"):
                         objects[vid]["model"] = model.text
-                    if serial is not None:
+                    else:
+                        objects[vid]["model"] = obj_type
+                    if (serial is not None and serial.text is not None and
+                            serial.text.strip()):
                         objects[vid]["serial"] = serial.text
                     objects[vid]["manufacturer"] = "Vantage"
 
