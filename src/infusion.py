@@ -381,7 +381,9 @@ class InFusionConfig:
         while next_vid in objects:
             # If Dimmer or Module, this is the device that owns the entity
             if (objects[next_vid]["type"] == "Dimmer" or
-                    objects[next_vid]["type"] == "Module"):
+                    objects[next_vid]["type"] == "Module" or
+                    objects[next_vid]["type"] == "LowVoltageRelayStation" or
+                    objects[next_vid]["type"] == "EqUX"):
                 objects[vid]["device_vid"] = next_vid
                 break
             next_vid = objects[next_vid].get("parent")
