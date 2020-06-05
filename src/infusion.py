@@ -195,7 +195,7 @@ class InFusionConfig:
 
         enabled_devices = []
         if cfg.get("buttons"):
-            enabled_devices.append("Button")
+            enabled_devices.append("Switch")
         if cfg.get("lights"):
             enabled_devices.append("Light")
             enabled_devices.append("DimmerLight")

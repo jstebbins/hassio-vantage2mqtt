@@ -90,7 +90,7 @@ class VantageGateway:
         if oid not in self._entities or command == "status":
             return
         # Validate entity is a button
-        if entity["type"] != "Button":
+        if entity["type"] != "Switch":
             return
 
         self._log.debug("switch command: %s %s", command, oid)
@@ -231,7 +231,7 @@ class VantageGateway:
         """
 
         for oid, item in entities.items():
-            if item["type"] == "Button":
+            if item["type"] == "Switch":
                 self._infusion.send_command("GETLED %s" % oid)
             elif item["type"] in ("DimmerLight", "Light"):
                 self._infusion.send_command("GETLOAD %s" % oid)
