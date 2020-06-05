@@ -119,8 +119,15 @@ class InFusionConfig:
                 self._log.warning("Failed read %s, %s", devicesFile, str(err))
         if self.objects:
             self._log.debug("Using device cache %s", devicesFile)
-            self.entities = self.filter_objects(enabled_devices, self.objects)
-            return # Valid devices configuration found
+            try:
+                self.entities = self.filter_objects(enabled_devices,
+                                                    self.objects)
+                return # Valid devices configuration found
+            except KeyError as err:
+                # This can happen when incompatible changes are made
+                # to the device cache schema
+                self._log.warning("Device cache error: %s", str(err))
+                self.objects = None
 
         # Prefer Design Center configuration file if available.
         # Reading it is faster than downloading Vantage inFusion memory card
