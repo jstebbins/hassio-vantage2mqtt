@@ -20,8 +20,8 @@
             "short-names" : false,
             "buttons" : true,
             "lights" : true,
-            "motors" : false,
-            "relays" : false
+            "relays" : true,
+            "motors" : false
         },
         "mqtt" : {
             "ip"   : "core-mosquitto",

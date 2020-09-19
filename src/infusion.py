@@ -462,7 +462,7 @@ class InFusionClient(asyncio.Protocol):
     Sends commands and receives status.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, entities):
         """
         param cfg: dictionary of Vantage inFusion connection settings
         """
@@ -491,6 +491,7 @@ class InFusionClient(asyncio.Protocol):
         self.connected_future = None
         self.connection_lost_future = None
         self._loop = None
+        self._entities = entities
 
     def on_zeroconf_service_state_change(self, zeroconf, service_type, name, state_change):
         """
@@ -633,12 +634,26 @@ class InFusionClient(asyncio.Protocol):
         """
 
         oid, state = self.decode_button_state(line)
+        if not oid:
+            oid, state = self.decode_load_state(line)
+
+        # protect against failure to initialize entities
+        if not self._entities:
+            return None, None, None
+
+        entity = None
         if oid and state:
-            return "switch", oid, state
-        oid, state = self.decode_load_state(line)
-        if oid and state:
-            return "light", oid, state
-        return None, None, None
+            entity = self._entities.get(oid)
+        if not entity:
+            return None, None, None
+
+        if entity["type"] == "Switch" or entity["type"] == "Relay":
+            ha_type = "switch"
+        elif entity["type"] == "Light" or entity["type"] == "DimmerLight":
+            ha_type = "light"
+        else:
+            return None, None, None
+        return ha_type, oid, state
 
     def data_received(self, data):
         """

@@ -41,7 +41,7 @@ class VantageGateway:
         self._max_reconnect_interval = 120
 
         try:
-            self._infusion = InFusionClient(cfg["vantage"])
+            self._infusion = InFusionClient(cfg["vantage"], entities)
         except ConfigException as err:
             self._log.critical("Error: %s", str(err))
             sys.exit(1)
@@ -81,14 +81,31 @@ class VantageGateway:
             self._entities = vantage_cfg.entities
             self._objects = vantage_cfg.objects
 
-    def switch_command(self, oid, command):
+    def relay_command(self, oid, command, param):
+        """
+        process MQTT command for a relay
+        Vantage Relays behave like switches but are a "Load" like a light
+        """
+
+        self._log.debug("relay command: %s %s", command, oid)
+        if command == "set":
+            if param == "ON":
+                value = 100
+            else:
+                value = 0
+            self._infusion.send_command("LOAD %s %d" % (oid, value))
+
+    def switch_command(self, oid, command, param):
         """
         process MQTT command for a switch
+        TODO: track current button state and only toggle if param !=
         """
 
         entity = self._entities.get(oid)
-        if oid not in self._entities or command == "status":
+        if not entity or command == "status":
             return
+        if entity["type"] == "Relay":
+            return self.relay_command(oid, command, param)
         # Validate entity is a button
         if entity["type"] != "Switch":
             return
@@ -186,7 +203,7 @@ class VantageGateway:
         if not oid or not command:
             return
         if entity_type == "switch":
-            self.switch_command(oid, command)
+            self.switch_command(oid, command, value)
         elif entity_type == "light":
             self.light_command(oid, command, value)
         elif entity_type == "site":
@@ -608,6 +625,9 @@ class Main:
         # Read Vantage inFusion configuration,
         # may come from inFusion memory card
         vantage_cfg = self.read_vantage_config()
+        if not vantage_cfg.objects:
+            self._log.error("Error reading Vantage InFusion Configuration")
+            sys.exit(1)
 
         # Write Vantage inFusion configuration to file, if requested
         if vantage_cfg.infusion_memory_valid:

@@ -33,18 +33,23 @@ class MQTTClient:
         self._dry_run = dry_run
         self._gateway_name = "Gateway"
 
-    def on_connect(self):
+    def on_connect(self, client, userdata, flags, rc):
         """
         Callback for connection established
         """
-        self._log.debug("connection established")
+
+        if rc != 0:
+            self._log.error("connection failed %d", rc)
+            return
+
+        self._log.info("connection established")
         self.connected = True
 
     def on_disconnect(self):
         """
         Callback for connection lost
         """
-        self._log.debug("connection lost")
+        self._log.info("connection lost")
         self.connected = False
 
     def connect(self):
@@ -110,7 +115,9 @@ class MQTTClient:
         self._log.debug("publish: %s -> %s", topic, value)
         if self._dry_run:
             return
-        self._client.publish(topic, value, qos=qos, retain=retain)
+        mi = self._client.publish(topic, value, qos=qos, retain=retain)
+        if mi.rc != mqtt.MQTT_ERR_SUCCESS:
+            self._log.error("failed (%d) to publish: %s -> %s", mi.rc, topic, value)
 
 class HomeAssistant(MQTTClient):
     """
@@ -266,7 +273,7 @@ class HomeAssistant(MQTTClient):
         """
 
         self._log.debug("register_switch")
-        if entity["type"] != "Switch":
+        if entity["type"] != "Switch" and entity["type"] != "Relay":
             return # Only switches
 
         oid = entity["OID"]
@@ -292,6 +299,10 @@ class HomeAssistant(MQTTClient):
 
         config_json = json.dumps(config)
         self.publish(topic_config, config_json)
+        if entity["type"] == "Relay":
+            self._log.debug("Relay: %s: %s", topic_config, config_json)
+        else:
+            self._log.debug("Switch: %s: %s", topic_config, config_json)
 
     def register_motor(self, entity, device, short_names=False, flush=False):
         """
@@ -305,11 +316,14 @@ class HomeAssistant(MQTTClient):
     def register_relay(self, entity, device, short_names=False, flush=False):
         """
         Register a relay with HomeAssistant controller
+        A relay just looks like another switch to Home Assistant
 
         param entity:      entity dictionary
         param short_names: use short names when registering entities
         param flush:       flush old entities settings from controller
         """
+
+        self.register_switch(entity, device, short_names, flush)
 
     def register_entities(self, entities, objects,
                           short_names=False, flush=False):
