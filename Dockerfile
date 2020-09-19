@@ -8,7 +8,7 @@ COPY src/ /
 COPY requirements.txt /
 
 # Install requirements for add-on
-RUN apk add --no-cache -U python3 && pip3 install --no-cache --upgrade pip
+RUN apk add --no-cache -U python3 py3-pip && pip3 install --no-cache --upgrade pip
 RUN pip3 install \
         --no-cache-dir \
         --prefer-binary \
