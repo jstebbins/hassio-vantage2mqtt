@@ -647,13 +647,7 @@ class InFusionClient(asyncio.Protocol):
         if not entity:
             return None, None, None
 
-        if entity["type"] == "Switch" or entity["type"] == "Relay":
-            ha_type = "switch"
-        elif entity["type"] == "Light" or entity["type"] == "DimmerLight":
-            ha_type = "light"
-        else:
-            return None, None, None
-        return ha_type, oid, state
+        return entity["type"], oid, state
 
     def data_received(self, data):
         """

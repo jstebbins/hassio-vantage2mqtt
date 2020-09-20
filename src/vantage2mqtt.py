@@ -232,8 +232,14 @@ class VantageGateway:
         param onoff: button on/off state
         """
 
-        topic = self._proto.gateway_entity_state_topic(entity_type, oid)
-        value = self._proto.translate_state(entity_type, state)
+        if entity_type == "Switch" or entity_type == "Relay":
+            ha_type = "switch"
+        elif entity_type == "Light" or entity_type == "DimmerLight":
+            ha_type = "light"
+        else:
+            return
+        topic = self._proto.gateway_entity_state_topic(ha_type, oid)
+        value = self._proto.translate_state(ha_type, state)
         self._proto.publish(topic, value)
 
     def on_vantage_unhandled(self, line):
