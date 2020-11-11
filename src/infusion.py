@@ -594,7 +594,7 @@ class InFusionClient(asyncio.Protocol):
         """
 
         if line:
-            pat = "(S:|R:GET)LED ([0-9]+) ([0-1]) .*"
+            pat = "(S:|R:|R:GET)LED ([0-9]+) ([0-1]) .*"
             m = re.search(pat, line)
             if m:
                 oid = m.group(2)
@@ -614,7 +614,7 @@ class InFusionClient(asyncio.Protocol):
         """
 
         if line:
-            pat = "(S:|R:GET)LOAD ([0-9]+) ([0-9]+)\\.[0-9]*"
+            pat = "(S:|R:|R:GET)LOAD ([0-9]+) ([0-9]+)\\.[0-9]*"
             m = re.search(pat, line)
             if m:
                 oid = m.group(2)
