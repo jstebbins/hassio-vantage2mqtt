@@ -256,7 +256,7 @@ class VantageGateway:
         for oid, item in entities.items():
             if item["type"] == "Switch":
                 self._infusion.send_command("GETLED %s" % oid)
-            elif item["type"] in ("DimmerLight", "Light"):
+            elif item["type"] in ("DimmerLight", "Light", "Relay"):
                 self._infusion.send_command("GETLOAD %s" % oid)
 
     def connect_mqtt(self):
