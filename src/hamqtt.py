@@ -68,10 +68,6 @@ class MQTTClient:
 
         if self._connect_attempted:
             self._client.reconnect()
-            # Susscribe to topics of interest
-            #self._client.subscribe("homeassistant/status", 1)
-            #self._log.warning('MQTT reconnect, subscribe "%s"', self.subscribe_topic)
-            #self._client.subscribe(self.subscribe_topic, 1)
             self._client.loop_start()
             return
 
@@ -97,11 +93,6 @@ class MQTTClient:
         # Connect to MQTT and wait for messages
         self._connect_attempted = True
         self._client.connect(self._ip, self._port, 60)
-        # Susscribe to topics of interest
-        #self._client.subscribe("homeassistant/status", 1)
-        #self._log.warning('MQTT subscribe "%s"', self.subscribe_topic)
-        #self._client.subscribe(self.subscribe_topic, 1)
-        # MQTT runs in a loop in it's own thread
         self._client.loop_start()
 
     def close(self):
