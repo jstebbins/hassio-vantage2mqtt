@@ -35,6 +35,7 @@ class VantageGateway:
 
         if self.protocol == self.PROTO_HOMEASSISTANT:
             self._proto = HomeAssistant("Vantage", self._site_name, cfg["mqtt"], dry_run)
+        self._proto.on_status = self.on_mqtt_status
         self._proto.on_filtered = self.on_mqtt_filtered
         self._proto.on_unfiltered = self.on_mqtt_unfiltered
         self._min_reconnect_interval = 1
@@ -88,6 +89,8 @@ class VantageGateway:
         """
 
         self._log.debug("relay command: %s %s", command, oid)
+        if param == "":
+            return
         if command == "set":
             if param == "ON":
                 value = 100
@@ -101,11 +104,14 @@ class VantageGateway:
         TODO: track current button state and only toggle if param !=
         """
 
+        if param == "":
+            return
         entity = self._entities.get(oid)
         if not entity or command == "status":
             return
         if entity["type"] == "Relay":
-            return self.relay_command(oid, command, param)
+            self.relay_command(oid, command, param)
+            return
         # Validate entity is a button
         if entity["type"] != "Switch":
             return
@@ -119,6 +125,8 @@ class VantageGateway:
         process MQTT command for a switch
         """
 
+        if param == "":
+            return
         entity = self._entities.get(oid)
         if not entity or command == "status":
             return
@@ -184,6 +192,18 @@ class VantageGateway:
                 # Get new status from all inFusion entities
                 self.update_state(self._entities)
 
+    # Homeassistant MQTT status
+    def on_mqtt_status(self, mosq, obj, msg):
+        """
+        MQTT callback for homeassistant status 'online'/'offline'
+
+        param mosq: ignored
+        param obj:  ignored
+        param msg:  contains the MQTT topic and value
+        """
+        value = str(msg.payload.decode("utf-8"))
+        self._log.warning("Homeassistant status: %s - %s", msg.topic, value)
+
     # Translate MQTT command and send to vantage
     def on_mqtt_filtered(self, mosq, obj, msg):
         #pylint: disable=unused-argument
@@ -240,7 +260,7 @@ class VantageGateway:
             return
         topic = self._proto.gateway_entity_state_topic(ha_type, oid)
         value = self._proto.translate_state(ha_type, state)
-        self._proto.publish(topic, value)
+        self._proto.publish(topic, value, retain=True)
 
     def on_vantage_unhandled(self, line):
         """
@@ -610,7 +630,7 @@ class Main:
         try:
             gateway.connect(self.flush_devices)
         except KeyboardInterrupt:
-            self._log.info("Stopped by user")
+            self._log.warning("Stopped by user")
         except Exception as err:
             self._log.error("Error: %s", str(err))
             raise

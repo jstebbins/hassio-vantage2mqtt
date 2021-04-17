@@ -30,6 +30,7 @@ class MQTTClient:
         self.filter_topic = "gateway/+/site/+/+"
         self.on_unfiltered = None
         self.on_filtered = None
+        self.on_status = None
         self._dry_run = dry_run
         self._gateway_name = "Gateway"
 
@@ -39,17 +40,21 @@ class MQTTClient:
         """
 
         if rc != 0:
-            self._log.error("connection failed %d", rc)
+            self._log.error("MQTT connection failed %d", rc)
             return
 
-        self._log.info("connection established")
+        self._log.warning("MQTT connection established")
+        # Susscribe to topics of interest
+        self._client.subscribe("homeassistant/status", 1)
+        self._log.warning('MQTT subscribe "%s"', self.subscribe_topic)
+        self._client.subscribe(self.subscribe_topic, 1)
         self.connected = True
 
     def on_disconnect(self):
         """
         Callback for connection lost
         """
-        self._log.info("connection lost")
+        self._log.warning("MQTT connection lost")
         self.connected = False
 
     def connect(self):
@@ -57,14 +62,16 @@ class MQTTClient:
         Connect to MQTT Broker, initialize callbacks, and listen for topics
         """
 
-        self._log.debug("connect with ID %s", self._gateway_name + "Gateway")
+        self._log.warning("MQTT connect with ID %s", self._gateway_name + "Gateway")
         if self._dry_run:
             return
 
         if self._connect_attempted:
             self._client.reconnect()
             # Susscribe to topics of interest
-            self._client.subscribe(self.subscribe_topic, 1)
+            #self._client.subscribe("homeassistant/status", 1)
+            #self._log.warning('MQTT reconnect, subscribe "%s"', self.subscribe_topic)
+            #self._client.subscribe(self.subscribe_topic, 1)
             self._client.loop_start()
             return
 
@@ -72,6 +79,9 @@ class MQTTClient:
         self._client.username_pw_set(self._user, self._passwd)
 
         # Add message subscription match callback
+        if self.on_status is not None:
+            self._client.message_callback_add("homeassistant/status",
+                                              self.on_status)
         if self.on_filtered is not None:
             self._client.message_callback_add(self.filter_topic,
                                               self.on_filtered)
@@ -88,8 +98,9 @@ class MQTTClient:
         self._connect_attempted = True
         self._client.connect(self._ip, self._port, 60)
         # Susscribe to topics of interest
-        self._log.debug('subscribe "%s"', self.subscribe_topic)
-        self._client.subscribe(self.subscribe_topic, 1)
+        #self._client.subscribe("homeassistant/status", 1)
+        #self._log.warning('MQTT subscribe "%s"', self.subscribe_topic)
+        #self._client.subscribe(self.subscribe_topic, 1)
         # MQTT runs in a loop in it's own thread
         self._client.loop_start()
 
@@ -99,10 +110,11 @@ class MQTTClient:
         """
         if self._dry_run:
             return
+        self._log.warning('MQTT disconnect"')
         self._client.disconnect()
 
     # Wrapper for MQTT publish, add logging
-    def publish(self, topic, value, qos=1, retain=True):
+    def publish(self, topic, value, qos=0, retain=False):
         """
         Publish a message to the MQTT Broker
 
@@ -237,7 +249,7 @@ class HomeAssistant(MQTTClient):
         oid = entity["OID"]
         topic_config = self.discovery_topic("light", oid, "config")
         if flush:
-            self.publish(topic_config, "")
+            self.publish(topic_config, "", retain=True)
             return
 
         if short_names:
@@ -250,7 +262,7 @@ class HomeAssistant(MQTTClient):
             "name"                     : entity[names],
             "command_topic"            : self.gateway_topic("light", oid, "set"),
             "state_topic"              : self.gateway_topic("light", oid, "state"),
-            "qos"                      : 1,
+            "qos"                      : 0,
             "retain"                   : True,
         }
         if entity["type"] == "DimmerLight":
@@ -261,7 +273,7 @@ class HomeAssistant(MQTTClient):
         self.add_device_info(config, device, names)
 
         config_json = json.dumps(config)
-        self.publish(topic_config, config_json)
+        self.publish(topic_config, config_json, retain=True)
 
     def register_switch(self, entity, device, short_names=False, flush=False):
         """
@@ -279,7 +291,7 @@ class HomeAssistant(MQTTClient):
         oid = entity["OID"]
         topic_config = self.discovery_topic("switch", oid, "config")
         if flush:
-            self.publish(topic_config, "")
+            self.publish(topic_config, "", retain=True)
             return
 
         if short_names:
@@ -292,13 +304,13 @@ class HomeAssistant(MQTTClient):
             "command_topic" : self.gateway_topic("switch", oid, "set"),
             "state_topic"   : self.gateway_topic("switch", oid, "state"),
             "icon"          : "mdi:light-switch",
-            "qos"           : 1,
+            "qos"           : 0,
             "retain"        : True,
         }
         self.add_device_info(config, device, names)
 
         config_json = json.dumps(config)
-        self.publish(topic_config, config_json)
+        self.publish(topic_config, config_json, retain=True)
         if entity["type"] == "Relay":
             self._log.debug("Relay: %s: %s", topic_config, config_json)
         else:

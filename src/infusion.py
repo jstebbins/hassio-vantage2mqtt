@@ -523,6 +523,7 @@ class InFusionClient(asyncio.Protocol):
         """
 
         self._log.debug("connection_made")
+        self._log.warning("Infusion Connection established")
         self._transport = transport
         # Mark future as completed
         self.connected = True
@@ -535,7 +536,9 @@ class InFusionClient(asyncio.Protocol):
 
         self._log.debug("connection_lost")
         if exc is not None:
-            self._log.debug("Connection error: %s", str(exc))
+            self._log.warning("Infusion Connection error: %s", str(exc))
+        else:
+            self._log.warning("Infusion Connection error")
         # Mark future as completed
         self.connected = False
         self.connection_lost_future.set_result(None)
