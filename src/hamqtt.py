@@ -254,7 +254,7 @@ class HomeAssistant(MQTTClient):
             "command_topic"            : self.gateway_topic("light", oid, "set"),
             "state_topic"              : self.gateway_topic("light", oid, "state"),
             "qos"                      : 0,
-            "retain"                   : True,
+            "retain"                   : False,
         }
         if entity["type"] == "DimmerLight":
             config["brightness"] = True
@@ -296,7 +296,7 @@ class HomeAssistant(MQTTClient):
             "state_topic"   : self.gateway_topic("switch", oid, "state"),
             "icon"          : "mdi:light-switch",
             "qos"           : 0,
-            "retain"        : True,
+            "retain"        : False,
         }
         self.add_device_info(config, device, names)
 
