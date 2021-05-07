@@ -1,0 +1,25 @@
+{
+    "vantage" : {
+        "site-name" : "Promontory",
+        "zeroconf" : true,
+        "ip"   : "192.168.3.104",
+        "command_port" : 3001,
+        "config_port" : 2001,
+        "skip-device-cache" : false,
+        "dcconfig" : "Promontory.dc",
+        "dccache" : true,
+        "debug" : false,
+        "short-names" : false,
+        "buttons" : true,
+        "lights" : true,
+        "scenes" : true,
+        "relays" : true,
+        "motors" : false
+    },
+    "mqtt" : {
+        "ip"   : "core-mosquitto",
+        "port" : 1883,
+        "username" : "mosquitto-user",
+        "password" : "mosquitto-password"
+    }
+}
