@@ -210,6 +210,8 @@ class InFusionConfig:
             enabled_devices.append("Motor")
         if cfg.get("relays"):
             enabled_devices.append("Relay")
+        if cfg.get("scenes"):
+            enabled_devices.append("Task")
         return enabled_devices
 
     # Connect to Vantage inFusion configuration port and read
@@ -375,6 +377,9 @@ class InFusionConfig:
         # Create fullname and fulluid based on "Area"
         fullname = name = objects[oid]["name"]
         fulluid = self.uidify(name)
+        if objects[oid]["type"] == "Task":
+            fullname = "Task" + " " + fullname
+            fulluid = "task_" + fulluid
         next_oid = objects[oid].get("parent")
         while next_oid in objects:
             # If Area and not root of hierarchy, prepend Area name
@@ -427,6 +432,7 @@ class InFusionConfig:
             if item["type"] in device_type_list:
                 unique_entities[uid] = item
         for uid, item in unique_entities.items():
+            item["state"] = None
             oid = item["OID"]
             entities[oid] = item
         return entities
@@ -608,6 +614,26 @@ class InFusionClient(asyncio.Protocol):
         return None, None
 
     @staticmethod
+    def decode_task_state(line):
+        """
+        Decode a status message from Vantage inFusion
+
+        param line: the status line to decode
+        returns:    oid, state
+        """
+
+        if line:
+            pat = "(S:|R:|R:GET)TASK ([0-9]+) ([0-1])"
+            m = re.search(pat, line)
+            if m:
+                oid = m.group(2)
+                state = "OFF"
+                if m.group(3) == "1":
+                    state = "ON"
+                return oid, {"state" : state}
+        return None, None
+
+    @staticmethod
     def decode_load_state(line):
         """
         Decode a status message from Vantage inFusion
@@ -639,6 +665,8 @@ class InFusionClient(asyncio.Protocol):
         oid, state = self.decode_button_state(line)
         if not oid:
             oid, state = self.decode_load_state(line)
+        if not oid:
+            oid, state = self.decode_task_state(line)
 
         # protect against failure to initialize entities
         if not self._entities:
@@ -650,6 +678,8 @@ class InFusionClient(asyncio.Protocol):
         if not entity:
             return None, None, None
 
+        # Keep track of current state of entities
+        entity["state"] = state
         return entity["type"], oid, state
 
     def data_received(self, data):

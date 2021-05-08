@@ -276,7 +276,8 @@ class HomeAssistant(MQTTClient):
         """
 
         self._log.debug("register_switch")
-        if entity["type"] != "Switch" and entity["type"] != "Relay":
+        if (entity["type"] != "Switch" and entity["type"] != "Relay" and
+            entity["type"] != "Task"):
             return # Only switches
 
         oid = entity["OID"]
@@ -304,6 +305,8 @@ class HomeAssistant(MQTTClient):
         self.publish(topic_config, config_json, retain=True)
         if entity["type"] == "Relay":
             self._log.debug("Relay: %s: %s", topic_config, config_json)
+        elif entity["type"] == "Task":
+            self._log.debug("Task: %s: %s", topic_config, config_json)
         else:
             self._log.debug("Switch: %s: %s", topic_config, config_json)
 
@@ -317,6 +320,18 @@ class HomeAssistant(MQTTClient):
         """
 
     def register_relay(self, entity, device, short_names=False, flush=False):
+        """
+        Register a relay with HomeAssistant controller
+        A relay just looks like another switch to Home Assistant
+
+        param entity:      entity dictionary
+        param short_names: use short names when registering entities
+        param flush:       flush old entities settings from controller
+        """
+
+        self.register_switch(entity, device, short_names, flush)
+
+    def register_task(self, entity, device, short_names=False, flush=False):
         """
         Register a relay with HomeAssistant controller
         A relay just looks like another switch to Home Assistant
@@ -351,6 +366,8 @@ class HomeAssistant(MQTTClient):
                 self.register_motor(entity, device, short_names, flush)
             elif entity["type"] == "Relay":
                 self.register_relay(entity, device, short_names, flush)
+            elif entity["type"] == "Task":
+                self.register_task(entity, device, short_names, flush)
 
     def flush_entities(self, entities):
         """

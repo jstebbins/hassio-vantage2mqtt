@@ -98,6 +98,25 @@ class VantageGateway:
                 value = 0
             self._infusion.send_command("LOAD %s %d" % (oid, value))
 
+    def task_command(self, oid, command, param):
+        """
+        process MQTT command for a task
+        TODO: track current button state and only toggle if param !=
+        """
+
+        if param == "":
+            return
+        entity = self._entities.get(oid)
+        if not entity or command == "status":
+            return
+        # Validate entity is a button
+        if entity["type"] != "Task":
+            return
+
+        self._log.debug("task command: %s %s", command, oid)
+        if command == "set":
+            self._infusion.send_command("TASK %s OPERATIONMODE" % oid)
+
     def switch_command(self, oid, command, param):
         """
         process MQTT command for a switch
@@ -108,6 +127,9 @@ class VantageGateway:
             return
         entity = self._entities.get(oid)
         if not entity or command == "status":
+            return
+        if entity["type"] == "Task":
+            self.task_command(oid, command, param)
             return
         if entity["type"] == "Relay":
             self.relay_command(oid, command, param)
@@ -252,7 +274,7 @@ class VantageGateway:
         param onoff: button on/off state
         """
 
-        if entity_type == "Switch" or entity_type == "Relay":
+        if entity_type == "Switch" or entity_type == "Relay" or entity_type == "Task":
             ha_type = "switch"
         elif entity_type == "Light" or entity_type == "DimmerLight":
             ha_type = "light"
@@ -278,6 +300,8 @@ class VantageGateway:
                 self._infusion.send_command("GETLED %s" % oid)
             elif item["type"] in ("DimmerLight", "Light", "Relay"):
                 self._infusion.send_command("GETLOAD %s" % oid)
+            elif item["type"] == "Task":
+                self._infusion.send_command("GETTASK %s" % oid)
 
     def connect_mqtt(self):
         """
@@ -325,6 +349,8 @@ class VantageGateway:
             self._infusion.send_command("status LED")
         if self.cfg["vantage"].get("lights"):
             self._infusion.send_command("status LOAD")
+        if self.cfg["vantage"].get("scenes"):
+            self._infusion.send_command("status TASK")
 
     async def _connect(self, flush=False):
         """
@@ -433,6 +459,7 @@ class Main:
                     "short-names" : {"type" : "boolean"},
                     "buttons" : {"type" : "boolean"},
                     "lights" : {"type" : "boolean"},
+                    "scenes" : {"type" : "boolean"},
                     "motors" : {"type" : "boolean"},
                     "relays" : {"type" : "boolean"}
                 },
