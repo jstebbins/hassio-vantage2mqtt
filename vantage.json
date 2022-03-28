@@ -8,7 +8,7 @@
         "skip-device-cache" : false,
         "dcconfig" : "Promontory.dc",
         "dccache" : true,
-        "debug" : false,
+        "debug" : true,
         "short-names" : false,
         "buttons" : true,
         "lights" : true,
