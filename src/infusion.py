@@ -32,30 +32,34 @@ def handle_zeroconf_service_state_change(zeroconf, service_type, name, state):
     if state is not ServiceStateChange.Added:
         return None, None
 
-    ip = port = None
+    out_ip = out_port = None
     info = zeroconf.get_service_info(service_type, name)
     for a in info.addresses:
-        log.debug("check IP: %d.%d.%d.%d", a[0], a[1], a[2], a[3])
-        if not ip or ip.startswith("169.254."):
-            ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+        ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+        log.debug("check info.addresses IP: %s", ip)
+        if not ip or not ip.startswith("169.254."):
+            out_ip = ip
+            out_port = info.port
             log.debug("set %s", ip)
-    port = info.port
 
     # info.addresses only contains link-local address for some reason
     # search for a non-link-local address
     # link-local is often not routed
+    log.debug("info.server %s", info.server)
     records = zeroconf.cache.entries_with_name(info.server)
     log.debug(records)
     for r in records:
         if isinstance(r, DNSAddress):
             a = r.address
-            log.debug("check IP: %d.%d.%d.%d", a[0], a[1], a[2], a[3])
-            if not ip or ip.startswith("169.254."):
-                ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+            ip = "%d.%d.%d.%d" % (a[0], a[1], a[2], a[3])
+            log.debug("check records IP: %s", ip)
+            if not ip or not ip.startswith("169.254."):
+                out_ip = ip
+                out_port = info.port
                 log.debug("set %s", ip)
 
-    log.debug("IP: %s:%d", ip, port)
-    return ip, port
+    log.debug("IP: %s:%d", out_ip, out_port)
+    return out_ip, out_port
 
 class ConfigException(Exception):
     """
@@ -249,8 +253,8 @@ class InFusionConfig:
                     if not data:
                         break
                     size += len(data)
-                    self._log.debug("read size %d", size)
                     config.extend(data)
+                self._log.debug("read size %d", size)
             except socket.timeout:
                 sock.close()
             except OSError as err:
@@ -704,3 +708,65 @@ class InFusionClient(asyncio.Protocol):
                 if self.on_unhandled is not None:
                     self.on_unhandled(line)
             line = self.state_buf.readline()
+
+
+
+# Unit test code
+if __name__ == "__main__":
+    import sys
+
+    def on_state(entity_type, oid, state):
+        logging.debug("Type %s OID %s State %s", entity_type, oid, state)
+
+    def on_unhandled(line):
+        logging.debug("Line %s", line)
+
+    async def client_connect(client):
+        status_set = False
+        reconnect_interval = 1
+        while True:
+            try:
+                await client.connect()
+                await client.connected_future
+                if not status_set:
+                    client.send_command("status LED")
+                    client.send_command("status LOAD")
+                    client.send_command("status TASK")
+                    status_set = True
+                await client.connection_lost_future
+                logging.warning("Connection lost... Retry...")
+                time.sleep(reconnect_interval)
+                if reconnect_interval < 120:
+                    reconnect_interval *= 2
+            except OSError as err:
+                logging.warning("inFusion connect error, retrying: %s", str(err))
+
+
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    try:
+        with open("../vantage.json") as fp:
+            params = json.load(fp)
+    except Exception as err:
+        logging.error("Error opening vantage.json: %s", str(err))
+        raise
+    fp.close()
+
+    # Attempt to connect to Infusion and download device config file
+    try:
+        logging.info("Connecting to Infusion config port...")
+        cfg = InFusionConfig(params["vantage"])
+        pretty = json.dumps(cfg.objects, indent=4)
+        logging.info("Objects: %s", pretty)
+    except Exception as err:
+        logging.error("Error: %s", str(err))
+
+    # Attempt to connect to Infusion control port
+    try:
+        logging.info("Connecting to Infusion control port...")
+        client = InFusionClient(params["vantage"], cfg.entities)
+        client.on_state = on_state
+        client.on_unhandled = on_unhandled
+        asyncio.run(client_connect(client))
+    except Exception as err:
+        logging.error("Error: %s", str(err))
+
