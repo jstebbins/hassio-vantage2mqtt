@@ -36,11 +36,12 @@ These topics can also be published from the HA Developer Tools MTQQ pane.
 
 ## Installation
 
-* Install the `Terminal & SSH` addon
+* Enable "Advanced Mode" in your user profile
+* Install the `Terminal & SSH` addon, configure and start it
 * `ssh root@homeassistant` and `mkdir addons/vantage2mqtt`, then exit
 * `scp -r Dockerfile config.json requirements.txt src/ root@homeassistant:addons/vantage2mqtt/`
-* From HA Supervisor `Add-ons store`, select `Reload` from menu in upper right corner
-* `Local add-ons` in the store should now contain `Vantage2MQTT`, select it
+* From HA Supervisor `Add-ons store`, select `Check for updates` from menu in upper right corner
+* `Local add-ons` in the store should now contain `Vantage2MQTT` (You may need to reload the page), select it
 * Built it
 * Configure it, see configuration below
 * Start it
